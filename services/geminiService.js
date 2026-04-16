@@ -99,16 +99,7 @@ const callLLM = async (prompt, model = GROQ_MODEL_CD) => {
   try {
     return await callGroq(prompt, model);
   } catch (groqErr) {
-    const isTPM = groqErr.message?.includes("tokens per minute");
-    if (isTPM) {
-      console.warn("Groq TPM limit hit, waiting 30s for reset…");
-      await sleep(30000);
-      try {
-        return await callGroq(prompt, model);
-      } catch {
-        // Still failing — fall through to Gemini
-      }
-    }
+    // On TPM limit, skip the 30s wait and fall through to Gemini immediately
     console.warn(`Groq unavailable (${groqErr.message}), falling back to Gemini…`);
     try {
       return await callGeminiFallback(prompt);
@@ -145,7 +136,9 @@ export const generateSuggestions = async ({
 Diet:${diet} | Cuisines:${cuisines.join(",")} | Slots:${mealsPerDay.join(",")} | People:${persons}
 ${pantryNames ? `Pantry:${pantryNames}` : ""}${calorieTarget ? ` | CalTarget:${calorieTarget}kcal` : ""}
 ${alreadySeen.length > 0 ? `DO NOT repeat:${alreadySeen.join(",")}` : ""}
-Rules: only complete meals (no sides/desserts/drinks). Correct mealType assignment. Spread across cuisines.
+Rules: only complete meals (no sides/desserts/drinks). Spread across cuisines.
+STRICT mealType rules — these are ONLY for breakfast/snacks, NEVER lunch/dinner: Poha, Upma, Idli, Dosa, Uttapam, Medu Vada, Sabudana Khichdi, Poori Bhaji, Puri Bhaji, Aloo Puri, Puran Poli, Rava Dosa, Pesarattu, Appam, Puttu, Thepla, Dhokla, Khandvi, Fafda, Jalebi, Chivda, Murukku, Chakli.
+Parathas (plain/stuffed) are breakfast. Khichdi is dinner/lunch. Dal Rice, Rajma Rice, Chole Bhature (chole is lunch, bhature is breakfast-adjacent), Biryani, Pulao are lunch/dinner.
 JSON array format: [{"name":"X","cuisine":"X","mealType":["lunch"],"cookTime":30,"prepAhead":false,"prepNote":null,"macros":{"cal":300,"protein":10,"carbs":40,"fat":8},"whyRecommended":"short reason"}]
 Return ONLY valid JSON array.`;
 
@@ -416,5 +409,54 @@ Return ONLY valid JSON array.`;
   } catch (err) {
     console.error("Agent D failed:", err);
     return [];
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AGENT E — Meal Prep Plan Generator
+// ─────────────────────────────────────────────────────────────────────────────
+export const generatePrepPlan = async ({ selectedMeals, weeklyPlan }) => {
+  // Build a compact meal summary — include ingredients + key steps
+  const mealSummaries = (weeklyPlan || []).flatMap((day) =>
+    (day.slots || []).map((slot) => {
+      const meal = (selectedMeals || []).find((m) => m.id === slot.mealId);
+      if (!meal) return null;
+      const ingNames = (meal.ingredients || []).map((i) => i.name).join(", ");
+      const stepsShort = (meal.steps || [])
+        .map((s, i) => `${i + 1}. ${s}`)
+        .join(" | ")
+        .slice(0, 300);
+      return `Day ${day.day} ${slot.mealType}: ${meal.name} (${meal.cuisine}, ${meal.cookTime}min)${
+        meal.prepAhead ? ` [PREP AHEAD: ${meal.prepNote || "yes"}]` : ""
+      }${ingNames ? `\n  Ingredients: ${ingNames}` : ""}${stepsShort ? `\n  Steps: ${stepsShort}` : ""}`;
+    })
+  ).filter(Boolean);
+
+  const prompt = `You are a meal prep assistant for Indian home cooking. Target user: working professional who preps on weekends and needs to cook each weekday meal in 15-20 min max.
+
+MEALS THIS WEEK:
+${mealSummaries.join("\n\n")}
+
+GENERATE a weekend prep plan. RULES:
+1. Identify ALL tasks doable ahead: chopping vegetables, soaking lentils/beans overnight, making onion-tomato base/paste, boiling potatoes/dal, cooking gravies that keep well, marinating, portioning dry spice mixes, making dough
+2. CONSOLIDATE across meals: "Chop 6 onions total (for Dal Makhani, Chole, Aloo Sabzi)" — not per dish
+3. Split into Saturday (heavier: gravies, bases, soaking, cooking) and Sunday (lighter: chopping, portioning, final prep, marinating)
+4. Saturday prep should take 60-90 min, Sunday 30-45 min
+5. Each weekday remaining cook time MUST be 15-20 min max
+6. Add practical storage notes (fridge in container, freezer, room temp)
+7. For dailyCookCards, list ONLY remaining quick steps after weekend prep
+
+JSON format:
+{"weekendPrep":[{"day":"saturday","estimatedTime":90,"taskGroups":[{"category":"soak|chop|boil|grind|cook_base|marinate|portion|other","label":"Group Label","tasks":[{"id":"s1","description":"task description mentioning quantities and which meals","estimatedMinutes":5,"forMeals":["Meal1","Meal2"],"storageNote":"Store in airtight container in fridge"}]}]}],"dailyCookCards":[{"day":1,"dayLabel":"Monday","slots":[{"mealType":"lunch","mealName":"Dal Makhani","mealId":"id","estimatedCookMinutes":18,"quickSteps":["Heat prepped onion-tomato base","Add soaked dal, pressure cook 3 whistles","Temper with ghee, serve with rice"],"preppedItems":["Dal soaked overnight","Onion-tomato base ready","Spice mix portioned"]}]}]}
+Return ONLY valid JSON. No markdown.`;
+
+  try {
+    const text = await callLLM(prompt);
+    const plan = parseJSON(text);
+    if (!plan || !plan.weekendPrep) return null;
+    return plan;
+  } catch (err) {
+    console.error("Agent E (Prep Plan) failed:", err);
+    return null;
   }
 };

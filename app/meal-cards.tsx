@@ -4,10 +4,16 @@ import {
   ActivityIndicator, Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Image } from "expo-image";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { supabase } from "../lib/supabase";
 import { getSeedCards } from "../data/topDishes";
 import { generateSuggestions } from "../services/geminiService";
+import { batchCheckRecipeDB } from "../services/recipeDBService";
+import { getActiveSiteUrls } from "../data/recipeSites";
+import RecipePopup from "../components/RecipePopup";
+import type { Meal } from "../components/RecipePopup";
+import ScreenGuide from "../components/ScreenGuide";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const BUFFER_SIZE      = 10;   // target unseen cards to keep ready per slot
@@ -41,6 +47,11 @@ type Card = {
   mealType: string[]; prepAhead: boolean; prepNote: string | null;
   extraIngredients?: number; whyRecommended?: string | null;
   isAIEnriched?: boolean;
+  imageUrl?: string | null;
+  sourceUrl?: string | null;
+  sourceName?: string | null;
+  ingredients?: any[];
+  steps?: string[];
 };
 
 function buildSlotCards(cards: Card[], slots: string[]) {
@@ -160,6 +171,8 @@ export default function MealCardsScreen() {
   const [showSlotDone, setShowSlotDone] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [aiToast, setAiToast] = useState<string | null>(null);
+  const [popupMeal, setPopupMeal] = useState<Meal | null>(null);
+  const enrichedCacheRef = useRef<Record<string, Card>>({}); // cache enriched recipes
 
   // Buffer refill guards — stored in refs so they don't trigger re-renders
   const isRefillingRef = useRef(false);
@@ -198,6 +211,34 @@ export default function MealCardsScreen() {
     setSlotCards(seedBySlot);
     slotCardsRef.current = seedBySlot;
     setIsLoading(false);
+
+    // Pre-fetch cached recipe images (fire-and-forget, no blocking)
+    try {
+      const siteUrls = getActiveSiteUrls(prof);
+      const siteNames = siteUrls.map((u: string) =>
+        u.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/$/, "")
+      );
+      const cached = await batchCheckRecipeDB(seed, siteNames);
+      if (cached && Object.keys(cached).length > 0) {
+        // Store enriched versions in cache ref for image display + instant popup
+        Object.entries(cached).forEach(([key, recipe]: [string, any]) => {
+          const card = seed.find((c: Card) => c.name.toLowerCase() === key);
+          if (card && recipe) {
+            enrichedCacheRef.current[card.id] = {
+              ...card,
+              imageUrl: recipe.image_url || null,
+              sourceUrl: recipe.source_url || null,
+              sourceName: recipe.source_name || null,
+              ingredients: recipe.ingredients || [],
+              steps: recipe.steps || [],
+              macros: recipe.macros || card.macros,
+              cookTime: recipe.cook_time || card.cookTime,
+              isAIEnriched: true,
+            };
+          }
+        });
+      }
+    } catch { /* non-critical — cards still work without images */ }
 
     // AI suggestions in background — prepend personalised cards without disruption
     try {
@@ -317,6 +358,7 @@ export default function MealCardsScreen() {
   };
 
   const advanceToNextSlot = () => {
+    fadeAnim.setValue(1); // ensure first card of next slot isn't stuck at 0 opacity
     if (currentSlotIdx + 1 >= slots.length) {
       setShowSlotDone(false);
       setShowSummary(true);
@@ -324,6 +366,18 @@ export default function MealCardsScreen() {
       setCurrentSlotIdx((p) => p + 1);
       setShowSlotDone(false);
     }
+  };
+
+  const handleCardTap = () => {
+    if (!currentCard) return;
+    // If we have a cached enriched version, use that
+    const cached = enrichedCacheRef.current[currentCard.id];
+    setPopupMeal((cached || currentCard) as Meal);
+  };
+
+  const handleRecipeEnriched = (enriched: Meal) => {
+    // Cache the enriched card so re-tapping is instant
+    enrichedCacheRef.current[enriched.id] = enriched as Card;
   };
 
   const handleConfirm = () => {
@@ -350,9 +404,22 @@ export default function MealCardsScreen() {
   const meta = MEAL_META[currentSlot] || { label: currentSlot, emoji: "🍽️" };
   const cardEmoji = currentCard ? (CUISINE_EMOJIS[currentCard.cuisine] || "🍛") : "";
   const [bg1] = currentCard ? (CUISINE_BG[currentCard.cuisine] || ["#f0fdf4", "#d1fae5"]) : ["#f9fafb", "#f3f4f6"];
+  const cachedCard = currentCard ? enrichedCacheRef.current[currentCard.id] : null;
+  const cardImageUrl = cachedCard?.imageUrl || null;
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
+      <ScreenGuide
+        screenKey="mealCards"
+        emoji="🍽️"
+        title="Choose Your Meals"
+        points={[
+          "Swipe through AI-suggested meals tailored to your diet & cuisines.",
+          "Tap ✓ to pick a meal or ✗ to skip — pick one for each slot.",
+          "Tap the card for full recipe, ingredients & nutrition info.",
+          "Tap ★ to favourite a meal so it shows up more often.",
+        ]}
+      />
       {/* Header */}
       <View className="bg-white px-4 pt-3 pb-3 border-b border-gray-100">
         <View className="flex-row items-center justify-between mb-3">
@@ -411,55 +478,72 @@ export default function MealCardsScreen() {
                 style={{ top: 30, bottom: 120, transform: [{ scale: 0.95 }], elevation: 2 }} />
             )}
 
-            {/* Main card */}
+            {/* Main card — tap body for recipe, buttons for skip/add */}
             <Animated.View className="w-full bg-white rounded-3xl border border-gray-100 overflow-hidden"
               style={{ opacity: fadeAnim, elevation: 4 }}>
-              {/* Cuisine header */}
-              <View className="h-36 items-center justify-center" style={{ backgroundColor: bg1 }}>
-                <Text style={{ fontSize: 64 }}>{cardEmoji}</Text>
-              </View>
-
-              {/* Card body */}
-              <View className="p-5">
-                <View className="flex-row items-start justify-between mb-2">
-                  <Text className="text-xl font-bold text-gray-800 flex-1 mr-2" numberOfLines={2}>
-                    {currentCard.name}
-                  </Text>
-                  {currentCard.prepAhead && <Text className="text-amber-500 text-lg">🕐</Text>}
+              <TouchableOpacity onPress={handleCardTap} activeOpacity={0.9}>
+                {/* Cuisine header — food photo if cached, emoji fallback */}
+                <View className="h-44 items-center justify-center" style={{ backgroundColor: bg1, overflow: "hidden" }}>
+                  {cardImageUrl ? (
+                    <Image
+                      source={{ uri: cardImageUrl }}
+                      style={{ width: "100%", height: 176 }}
+                      contentFit="cover"
+                      transition={300}
+                      cachePolicy="memory-disk"
+                    />
+                  ) : (
+                    <Text style={{ fontSize: 64 }}>{cardEmoji}</Text>
+                  )}
                 </View>
 
-                <View className="flex-row items-center gap-2 mb-3">
-                  <View className="bg-green-50 rounded-full px-2 py-0.5">
-                    <Text className="text-xs text-green-700">{currentCard.cuisine}</Text>
+                {/* Card body */}
+                <View className="p-5">
+                  <View className="flex-row items-start justify-between mb-2">
+                    <Text className="text-xl font-bold text-gray-800 flex-1 mr-2" numberOfLines={2}>
+                      {currentCard.name}
+                    </Text>
+                    {currentCard.prepAhead && <Text className="text-amber-500 text-lg">🕐</Text>}
                   </View>
-                  <Text className="text-xs text-gray-400">⏱ {currentCard.cookTime} min</Text>
-                </View>
 
-                {/* Macros */}
-                <View className="flex-row gap-2 mb-3">
-                  {[
-                    { label: "Cal",  value: currentCard.macros?.cal },
-                    { label: "Pro",  value: `${currentCard.macros?.protein}g` },
-                    { label: "Carb", value: `${currentCard.macros?.carbs}g` },
-                    { label: "Fat",  value: `${currentCard.macros?.fat}g` },
-                  ].map((m) => (
-                    <View key={m.label} className="flex-1 bg-gray-50 rounded-xl p-2 items-center">
-                      <Text className="text-sm font-bold text-gray-700">{m.value}</Text>
-                      <Text className="text-xs text-gray-400">{m.label}</Text>
+                  <View className="flex-row items-center gap-2 mb-3">
+                    <View className="bg-green-50 rounded-full px-2 py-0.5">
+                      <Text className="text-xs text-green-700">{currentCard.cuisine}</Text>
                     </View>
-                  ))}
-                </View>
+                    <Text className="text-xs text-gray-400">⏱ {currentCard.cookTime} min</Text>
+                  </View>
 
-                {currentCard.whyRecommended ? (
-                  <Text className="text-xs text-green-600 bg-green-50 px-3 py-1.5 rounded-full self-start">
-                    ✦ {currentCard.whyRecommended}
+                  {/* Macros */}
+                  <View className="flex-row gap-2 mb-3">
+                    {[
+                      { label: "Cal",  value: currentCard.macros?.cal },
+                      { label: "Pro",  value: `${currentCard.macros?.protein}g` },
+                      { label: "Carb", value: `${currentCard.macros?.carbs}g` },
+                      { label: "Fat",  value: `${currentCard.macros?.fat}g` },
+                    ].map((m) => (
+                      <View key={m.label} className="flex-1 bg-gray-50 rounded-xl p-2 items-center">
+                        <Text className="text-sm font-bold text-gray-700">{m.value}</Text>
+                        <Text className="text-xs text-gray-400">{m.label}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  {currentCard.whyRecommended ? (
+                    <Text className="text-xs text-green-600 bg-green-50 px-3 py-1.5 rounded-full self-start">
+                      ✦ {currentCard.whyRecommended}
+                    </Text>
+                  ) : currentCard.extraIngredients ? (
+                    <Text className="text-xs text-gray-400 bg-gray-50 px-3 py-1.5 rounded-full self-start">
+                      🛒 +{currentCard.extraIngredients} extra ingredients
+                    </Text>
+                  ) : null}
+
+                  {/* Tap hint */}
+                  <Text style={{ fontSize: 11, color: "#d1d5db", textAlign: "center", marginTop: 10 }}>
+                    Tap card to view full recipe
                   </Text>
-                ) : currentCard.extraIngredients ? (
-                  <Text className="text-xs text-gray-400 bg-gray-50 px-3 py-1.5 rounded-full self-start">
-                    🛒 +{currentCard.extraIngredients} extra ingredients
-                  </Text>
-                ) : null}
-              </View>
+                </View>
+              </TouchableOpacity>
             </Animated.View>
 
             {/* Skip / Add buttons */}
@@ -483,6 +567,14 @@ export default function MealCardsScreen() {
           </View>
         )}
       </View>
+
+      {/* Recipe popup — fetches full recipe on demand */}
+      <RecipePopup
+        meal={popupMeal}
+        profile={profile}
+        onClose={() => setPopupMeal(null)}
+        onEnriched={handleRecipeEnriched}
+      />
     </SafeAreaView>
   );
 }

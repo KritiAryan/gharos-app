@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 import {
   View, Text, ScrollView, TouchableOpacity,
-  ActivityIndicator, Modal,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { supabase } from "../lib/supabase";
-import { generateWeeklyPlan } from "../services/geminiService";
+import { generateWeeklyPlan, generateShoppingList, generatePrepPlan } from "../services/geminiService";
+import RecipePopup from "../components/RecipePopup";
+import ScreenGuide from "../components/ScreenGuide";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Meal = {
@@ -56,102 +58,7 @@ function getNutritionTip(totals: { cal: number; protein: number; carbs: number; 
   return null;
 }
 
-// ─── Recipe Popup ─────────────────────────────────────────────────────────────
-function RecipePopup({ meal, onClose }: { meal: Meal | null; onClose: () => void }) {
-  if (!meal) return null;
-  return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity
-        style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" }}
-        activeOpacity={1} onPress={onClose}
-      >
-        <TouchableOpacity activeOpacity={1} onPress={() => {}}>
-          <View className="bg-white rounded-t-3xl" style={{ maxHeight: "85%" }}>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Header */}
-              <View className="h-32 bg-green-50 items-center justify-center rounded-t-3xl">
-                <Text style={{ fontSize: 56 }}>🍛</Text>
-              </View>
-              <View className="p-6">
-                <View className="flex-row items-start justify-between mb-4">
-                  <View className="flex-1 mr-3">
-                    <Text className="text-xl font-bold text-gray-800">{meal.name}</Text>
-                    <Text className="text-sm text-gray-400 mt-0.5">
-                      {meal.cuisine} · ⏱ {meal.cookTime} min
-                    </Text>
-                  </View>
-                  <TouchableOpacity onPress={onClose}>
-                    <Text className="text-gray-400 text-3xl leading-none">×</Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Macros */}
-                {meal.macros && (
-                  <View className="flex-row gap-2 mb-5">
-                    {[
-                      { label: "Cal", value: meal.macros.cal },
-                      { label: "Protein", value: `${meal.macros.protein}g` },
-                      { label: "Carbs", value: `${meal.macros.carbs}g` },
-                      { label: "Fat", value: `${meal.macros.fat}g` },
-                    ].map((m) => (
-                      <View key={m.label} className="flex-1 bg-gray-50 rounded-xl p-2 items-center">
-                        <Text className="text-sm font-bold text-gray-700">{m.value}</Text>
-                        <Text className="text-xs text-gray-400">{m.label}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Prep note */}
-                {meal.prepAhead && meal.prepNote && (
-                  <View className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
-                    <Text className="text-sm text-amber-700">🕐 <Text className="font-bold">Prep needed:</Text> {meal.prepNote}</Text>
-                  </View>
-                )}
-
-                {/* Ingredients */}
-                {meal.ingredients && meal.ingredients.length > 0 && (
-                  <View className="mb-4">
-                    <Text className="font-semibold text-gray-700 mb-2">Ingredients</Text>
-                    {meal.ingredients.map((ing, i) => (
-                      <View key={i} className="flex-row items-center justify-between py-1 border-b border-gray-50">
-                        <Text className={`text-sm ${ing.inPantry ? "text-gray-400" : "text-gray-800"}`}>
-                          {ing.inPantry ? "✓ " : "• "}{ing.name}
-                        </Text>
-                        <Text className="text-xs text-gray-400">{ing.quantity} {ing.unit}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Steps */}
-                {meal.steps && meal.steps.length > 0 && (
-                  <View className="mb-4">
-                    <Text className="font-semibold text-gray-700 mb-2">Method</Text>
-                    {meal.steps.map((step, i) => (
-                      <View key={i} className="flex-row gap-3 mb-2">
-                        <View className="w-5 h-5 rounded-full bg-green-100 items-center justify-center flex-shrink-0 mt-0.5">
-                          <Text className="text-xs font-bold text-green-700">{i + 1}</Text>
-                        </View>
-                        <Text className="text-sm text-gray-600 flex-1">{step}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {!meal.isAIEnriched && (
-                  <Text className="text-xs text-gray-300 mt-2">
-                    Full recipe details not yet loaded for this card.
-                  </Text>
-                )}
-              </View>
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
-      </TouchableOpacity>
-    </Modal>
-  );
-}
+// RecipePopup is now a shared component from ../components/RecipePopup.tsx
 
 // ─── Day Card ─────────────────────────────────────────────────────────────────
 function DayCard({ dayPlan, getMeal, favourites, onToggleFav, onTapMeal, calorieTarget }: {
@@ -257,9 +164,9 @@ function DayCard({ dayPlan, getMeal, favourites, onToggleFav, onTapMeal, calorie
 }
 
 // ─── Success Screen ───────────────────────────────────────────────────────────
-function SuccessScreen({ plan, weeklySetup, onGoHome, onViewShopping }: {
+function SuccessScreen({ plan, weeklySetup, onGoHome, onViewShopping, onViewPrep }: {
   plan: DayPlan[]; weeklySetup: { days: number; meals: string[] };
-  onGoHome: () => void; onViewShopping: () => void;
+  onGoHome: () => void; onViewShopping: () => void; onViewPrep: () => void;
 }) {
   const totalMeals = plan.reduce((sum, d) => sum + d.slots.length, 0);
   const avgCal = plan.length
@@ -273,13 +180,17 @@ function SuccessScreen({ plan, weeklySetup, onGoHome, onViewShopping }: {
         {weeklySetup.days} days · {totalMeals} meals{avgCal > 0 ? ` · ~${avgCal} kcal/day avg` : ""}
       </Text>
       <View className="w-full gap-3">
-        <TouchableOpacity onPress={onGoHome}
-          className="py-4 bg-green-500 rounded-2xl items-center" activeOpacity={0.8}>
-          <Text className="text-white font-semibold text-base">📅 View My Plan</Text>
-        </TouchableOpacity>
         <TouchableOpacity onPress={onViewShopping}
+          className="py-4 bg-green-500 rounded-2xl items-center" activeOpacity={0.8}>
+          <Text className="text-white font-semibold text-base">🛒 View Shopping List</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onViewPrep}
+          className="py-3.5 bg-amber-500 rounded-2xl items-center" activeOpacity={0.8}>
+          <Text className="text-white font-semibold text-sm">🔪 View Prep Plan</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={onGoHome}
           className="py-3.5 border-2 border-gray-200 rounded-2xl items-center" activeOpacity={0.8}>
-          <Text className="text-gray-600 font-semibold text-sm">🛒 Get Shopping List</Text>
+          <Text className="text-gray-600 font-semibold text-sm">📅 View My Plan</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>
@@ -367,13 +278,24 @@ export default function WeeklyPlanScreen() {
         await supabase.from("profiles").update({ favourites: merged }).eq("id", user.id);
       }
 
-      // Save plan to meal_plans
+      // Generate shopping list + prep plan in parallel
+      const pantry = profile?.pantry || [];
+      const persons = profile?.config?.persons || 2;
+      const [shoppingResult, prepResult] = await Promise.allSettled([
+        generateShoppingList({ meals: picksRaw, pantry, persons }),
+        generatePrepPlan({ selectedMeals: picksRaw, weeklyPlan: plan }),
+      ]);
+      const shoppingList = shoppingResult.status === "fulfilled" ? shoppingResult.value : null;
+      const prepPlan = prepResult.status === "fulfilled" ? prepResult.value : null;
+
+      // Save plan + shopping list + prep plan together
       await supabase.from("meal_plans").insert({
         user_id: user.id,
         setup: { days: daysNum, meals: mealSlots },
         selected_meals: picksRaw,
         weekly_plan: plan,
-        shopping_list: null,
+        shopping_list: shoppingList,
+        prep_plan: prepPlan,
       });
     }
 
@@ -399,6 +321,7 @@ export default function WeeklyPlanScreen() {
         weeklySetup={{ days: daysNum, meals: mealSlots }}
         onGoHome={() => router.replace("/(tabs)/plan")}
         onViewShopping={() => router.replace("/(tabs)/shopping")}
+        onViewPrep={() => router.push("/meal-prep")}
       />
     );
   }
@@ -410,6 +333,17 @@ export default function WeeklyPlanScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
+      <ScreenGuide
+        screenKey="weeklyPlan"
+        emoji="📆"
+        title="Your Weekly Calendar"
+        points={[
+          "We've arranged your meals across the week — tap any to view the recipe.",
+          "Use the shuffle button if you want a different arrangement.",
+          "Calorie totals per day appear below — warnings if you exceed your target.",
+          "Saving generates your shopping list and weekend prep plan automatically.",
+        ]}
+      />
       {/* Header */}
       <View className="bg-white px-4 py-3 border-b border-gray-100 flex-row items-center">
         <TouchableOpacity onPress={() => router.back()}
@@ -439,8 +373,17 @@ export default function WeeklyPlanScreen() {
         ))}
       </ScrollView>
 
-      {/* Recipe popup */}
-      <RecipePopup meal={popupMeal} onClose={() => setPopupMeal(null)} />
+      {/* Recipe popup — auto-fetches full recipe via Agent B */}
+      <RecipePopup
+        meal={popupMeal}
+        profile={profile}
+        onClose={() => setPopupMeal(null)}
+        onEnriched={(enriched) => {
+          // Update the meal in picksRaw cache so it has ingredients/steps next time
+          const idx = picksRaw.findIndex((m) => m.id === enriched.id);
+          if (idx >= 0) picksRaw[idx] = enriched as Meal;
+        }}
+      />
 
       {/* Bottom CTA */}
       <View className="absolute bottom-0 left-0 right-0 bg-white border-t border-gray-100 px-4 py-4 gap-2"
@@ -449,13 +392,12 @@ export default function WeeklyPlanScreen() {
           className="py-4 bg-green-500 rounded-2xl items-center"
           style={{ opacity: saving ? 0.6 : 1 }} activeOpacity={0.8}>
           {saving
-            ? <ActivityIndicator color="white" />
-            : <Text className="text-white font-semibold text-base">✅ Save Plan</Text>
+            ? <View className="flex-row items-center gap-2">
+                <ActivityIndicator color="white" />
+                <Text className="text-white font-medium text-sm">Building shopping list & prep plan...</Text>
+              </View>
+            : <Text className="text-white font-semibold text-base">✅ Save Plan & Get Shopping List</Text>
           }
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.replace("/(tabs)/shopping")}
-          className="py-3 border-2 border-gray-200 rounded-2xl items-center" activeOpacity={0.8}>
-          <Text className="text-gray-600 font-semibold text-sm">🛒 View Shopping List</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

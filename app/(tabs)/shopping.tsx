@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { generateShoppingList } from "../../services/geminiService";
+import ScreenGuide from "../../components/ScreenGuide";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type ShoppingItem = {
@@ -30,6 +31,16 @@ const CATEGORY_ORDER = [
 ];
 
 const ALWAYS_AVAILABLE = ["water", "hot water", "boiling water", "ice", "tap water"];
+
+// ─── Price Multipliers for different apps ────────────────────────────────────
+// These are approximate multipliers vs kirana store prices
+const APP_PRICES = [
+  { name: "Kirana Store",  emoji: "🏪", multiplier: 1.0,  color: "#16a34a", bg: "#f0fdf4", border: "#dcfce7" },
+  { name: "BigBasket",     emoji: "🟢", multiplier: 1.05, color: "#15803d", bg: "#f0fdf4", border: "#bbf7d0" },
+  { name: "Blinkit",       emoji: "🟡", multiplier: 1.15, color: "#ca8a04", bg: "#fefce8", border: "#fef08a" },
+  { name: "Zepto",         emoji: "🟣", multiplier: 1.18, color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe" },
+  { name: "Swiggy Instamart", emoji: "🟠", multiplier: 1.12, color: "#ea580c", bg: "#fff7ed", border: "#fed7aa" },
+];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function deduplicateItems(items: ShoppingItem[]): ShoppingItem[] {
@@ -78,6 +89,88 @@ function formatForShare(groups: ReturnType<typeof groupByCategory>, checked: Rec
   return lines.join("\n");
 }
 
+// ─── Price Comparison Component ─────────────────────────────────────────────
+function PriceComparison({ kiranaTotal }: { kiranaTotal: number }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (kiranaTotal <= 0) return null;
+
+  return (
+    <View style={{
+      backgroundColor: "#fff", borderRadius: 16, borderWidth: 1, borderColor: "#f3f4f6",
+      marginBottom: 12, overflow: "hidden", elevation: 1,
+    }}>
+      <TouchableOpacity
+        onPress={() => setExpanded(!expanded)}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+          paddingHorizontal: 16, paddingVertical: 12,
+          backgroundColor: "#eff6ff", borderBottomWidth: expanded ? 1 : 0, borderBottomColor: "#f3f4f6",
+        }}
+      >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Text style={{ fontSize: 16 }}>📊</Text>
+          <View>
+            <Text style={{ fontSize: 13, fontWeight: "700", color: "#1e40af" }}>Price Comparison</Text>
+            <Text style={{ fontSize: 11, color: "#3b82f6" }}>Compare across grocery apps</Text>
+          </View>
+        </View>
+        <Text style={{ fontSize: 14, color: "#9ca3af" }}>{expanded ? "⌃" : "⌄"}</Text>
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+          {APP_PRICES.map((app, idx) => {
+            const appTotal = Math.round(kiranaTotal * app.multiplier);
+            const diff = appTotal - kiranaTotal;
+            const isCheapest = app.multiplier === Math.min(...APP_PRICES.map((a) => a.multiplier));
+
+            return (
+              <View key={app.name} style={{
+                flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+                paddingVertical: 10, paddingHorizontal: 8,
+                borderBottomWidth: idx < APP_PRICES.length - 1 ? 1 : 0,
+                borderBottomColor: "#f9fafb",
+                backgroundColor: isCheapest ? "#f0fdf4" : "transparent",
+                borderRadius: isCheapest ? 10 : 0,
+              }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                  <Text style={{ fontSize: 18 }}>{app.emoji}</Text>
+                  <View>
+                    <Text style={{ fontSize: 13, fontWeight: "600", color: "#374151" }}>{app.name}</Text>
+                    {isCheapest && (
+                      <Text style={{ fontSize: 10, fontWeight: "600", color: "#16a34a" }}>Best Price</Text>
+                    )}
+                  </View>
+                </View>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Text style={{ fontSize: 16, fontWeight: "700", color: app.color }}>₹{appTotal}</Text>
+                  {diff > 0 && (
+                    <Text style={{ fontSize: 10, color: "#ef4444" }}>+₹{diff} more</Text>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+
+          {/* Disclaimer */}
+          <View style={{
+            flexDirection: "row", alignItems: "center", gap: 6,
+            backgroundColor: "#fefce8", borderRadius: 8,
+            paddingHorizontal: 10, paddingVertical: 6, marginTop: 8,
+          }}>
+            <Text style={{ fontSize: 11 }}>ℹ️</Text>
+            <Text style={{ fontSize: 10, color: "#92400e", flex: 1 }}>
+              Prices are estimated based on typical grocery app markups. Actual prices may vary by city and offers.
+            </Text>
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
 export default function ShoppingScreen() {
   const [profile, setProfile] = useState<any>(null);
   const [user, setUser] = useState<any>(null);
@@ -105,7 +198,7 @@ export default function ShoppingScreen() {
     const [{ data: prof }, { data: plans }] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle(),
       supabase.from("meal_plans")
-        .select("selected_meals")
+        .select("selected_meals, shopping_list")
         .eq("user_id", session.user.id)
         .order("created_at", { ascending: false })
         .limit(1),
@@ -113,9 +206,25 @@ export default function ShoppingScreen() {
 
     setProfile(prof);
 
-    const meals = plans?.[0]?.selected_meals || [];
+    const latestPlan = plans?.[0];
+    const meals = latestPlan?.selected_meals || [];
     if (meals.length === 0) { setNoPlan(true); setLoading(false); return; }
     setSelectedMeals(meals);
+
+    // If the plan already has a saved shopping list, use it instantly (no LLM call)
+    const savedList = latestPlan?.shopping_list;
+    if (Array.isArray(savedList) && savedList.length > 0) {
+      const deduped = deduplicateItems(savedList);
+      const withIds = deduped.map((item: ShoppingItem, i: number) => ({ ...item, id: `item_${i}` }));
+      setGroups(groupByCategory(withIds));
+      setChecked({});
+      setAddedToPantry({});
+      setLoading(false);
+      buildCalledRef.current = true;
+      return;
+    }
+
+    // No saved list — generate via LLM
     await buildList(meals, prof);
   };
 
@@ -191,6 +300,17 @@ export default function ShoppingScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
+      <ScreenGuide
+        screenKey="shopping"
+        emoji="🛒"
+        title="Shopping List"
+        points={[
+          "Auto-generated from your plan — we only list what's missing from your pantry.",
+          "Tick items off as you shop; grouped by category for easy aisle-by-aisle shopping.",
+          "Tap 'Compare Prices' to see estimates across Kirana, Blinkit, Zepto, BigBasket & Swiggy.",
+          "Share the full list via WhatsApp or any messaging app with one tap.",
+        ]}
+      />
       {/* Header */}
       <View className="bg-white border-b border-gray-100 px-4 py-3 flex-row items-center justify-between">
         <View className="flex-1 items-center">
@@ -268,9 +388,9 @@ export default function ShoppingScreen() {
               </View>
             )}
 
-            {/* Price estimate */}
+            {/* Price estimate — kirana */}
             {hasAnyPrice && totalCount > 0 && (
-              <View className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex-row items-center justify-between mb-4">
+              <View className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex-row items-center justify-between mb-3">
                 <View>
                   <Text className="text-sm font-semibold text-amber-800">Estimated total</Text>
                   <Text className="text-xs text-amber-600 mt-0.5">Approx. kirana prices</Text>
@@ -280,6 +400,11 @@ export default function ShoppingScreen() {
                   <Text className="text-xs text-amber-500">for {toBuyItems.filter((i) => !checked[i.id]).length} items</Text>
                 </View>
               </View>
+            )}
+
+            {/* Price comparison across apps */}
+            {hasAnyPrice && totalEstimate > 0 && (
+              <PriceComparison kiranaTotal={totalEstimate} />
             )}
 
             {/* Everything in pantry */}

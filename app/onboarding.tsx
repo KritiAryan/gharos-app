@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { supabase } from "../lib/supabase";
+import WelcomeCarousel from "../components/WelcomeCarousel";
 
 const STEPS = ["Household", "Diet", "Cuisine", "Calories"];
 
@@ -27,6 +28,7 @@ export default function OnboardingScreen() {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
   const [config, setConfig] = useState({
     persons: 2,
     diet: "",
@@ -56,11 +58,38 @@ export default function OnboardingScreen() {
       id: session.user.id,
       email: session.user.email,
       full_name: session.user.user_metadata?.full_name || "",
-      config,
+      config: { ...config, guideSeen: { welcome: false } },
     });
     setSaving(false);
+    setShowWelcome(true);
+  };
+
+  const finishWelcome = async () => {
+    // mark welcome as seen so it never shows again
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      const { data } = await supabase
+        .from("profiles")
+        .select("config")
+        .eq("id", session.user.id)
+        .maybeSingle();
+      const existing = data?.config || {};
+      await supabase
+        .from("profiles")
+        .update({
+          config: {
+            ...existing,
+            guideSeen: { ...(existing.guideSeen || {}), welcome: true },
+          },
+        })
+        .eq("id", session.user.id);
+    }
     router.replace("/(tabs)");
   };
+
+  if (showWelcome) {
+    return <WelcomeCarousel onDone={finishWelcome} />;
+  }
 
   const progress = ((step + 1) / STEPS.length) * 100;
 

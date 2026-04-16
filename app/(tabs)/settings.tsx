@@ -7,6 +7,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { DEFAULT_RECIPE_SITES } from "../../data/recipeSites";
+import ScreenGuide from "../../components/ScreenGuide";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const CUISINE_OPTIONS = [
@@ -162,6 +163,17 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-gray-50">
+      <ScreenGuide
+        screenKey="settings"
+        emoji="⚙️"
+        title="Your Preferences"
+        points={[
+          "Update household size, diet, cuisines & calorie target anytime.",
+          "Pick which recipe sites we should pull from (NDTV, Archana's Kitchen, etc).",
+          "Add favourite recipe links or fully custom recipes to guarantee they appear.",
+          "Favourites you starred from meal cards live here too.",
+        ]}
+      />
       <ScrollView className="flex-1" contentContainerStyle={{ paddingBottom:40 }} showsVerticalScrollIndicator={false}>
 
         <View className="bg-white border-b border-gray-100 px-4 py-3 items-center">

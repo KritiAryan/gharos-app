@@ -8,12 +8,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { categorizeItem } from "../../services/categorizeItem";
+import ScreenGuide from "../../components/ScreenGuide";
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
-const SIDEBAR_W = 56;
+const SIDEBAR_W = 80;
 const COLS      = 3;
-const CELL_GAP  = 6;
-const GRID_PAD  = 10;
+const CELL_GAP  = 8;
+const GRID_PAD  = 12;
 
 // ─── Image CDN ────────────────────────────────────────────────────────────────
 // Same filenames as the web app (ingredients_100x100 — lighter, faster)
@@ -106,14 +107,14 @@ const CATEGORY_META: Record<string, { emoji: string }> = {
 };
 const CATEGORY_ORDER = Object.keys(CATEGORY_META);
 
-// Short labels for narrow vertical tab
+// Short labels for vertical tab — match web app
 const CAT_SHORT: Record<string, string> = {
   "Grains & Lentils":  "Grains",
-  "Vegetables":        "Veggies",
+  "Vegetables":        "Vegetables",
   "Dairy":             "Dairy",
   "Spices & Masalas":  "Spices",
   "Oils & Condiments": "Oils",
-  "Dry Fruits & Nuts": "Nuts",
+  "Dry Fruits & Nuts": "Dry Fruits",
   "Fruits":            "Fruits",
   "Beverages":         "Drinks",
   "Other":             "Other",
@@ -244,7 +245,7 @@ function TileGrid({
   );
 }
 
-// ─── Item tile — matches web: contained photo square, padded card ─────────────
+// ─── Item tile — matches web: 56×56 photo, rounded card, green badge ─────────
 function ItemTile({ item, selected, onToggle }: { item: PantryItem; selected: boolean; onToggle: (id: string) => void }) {
   const [imgError, setImgError] = useState(false);
   const imgUri = getItemImageUri(item.id);
@@ -258,7 +259,7 @@ function ItemTile({ item, selected, onToggle }: { item: PantryItem; selected: bo
         width: "100%",
         alignItems: "center",
         justifyContent: "center",
-        paddingVertical: 10,
+        paddingVertical: 12,
         paddingHorizontal: 4,
         borderRadius: 16,
         borderWidth: 2,
@@ -272,21 +273,21 @@ function ItemTile({ item, selected, onToggle }: { item: PantryItem; selected: bo
         <View
           style={{
             position: "absolute", top: 6, right: 6,
-            width: 18, height: 18, borderRadius: 9,
+            width: 20, height: 20, borderRadius: 10,
             backgroundColor: "#22c55e",
             alignItems: "center", justifyContent: "center",
             zIndex: 10,
           }}
         >
-          <Text style={{ color: "#fff", fontSize: 9, fontWeight: "700", lineHeight: 11 }}>✓</Text>
+          <Text style={{ color: "#fff", fontSize: 10, fontWeight: "700", lineHeight: 12 }}>✓</Text>
         </View>
       )}
 
-      {/* 48×48 photo — fits well in ~95px tile */}
+      {/* 56×56 photo — matches web w-14 h-14 */}
       <View
         style={{
-          width: 48, height: 48,
-          borderRadius: 12,
+          width: 56, height: 56,
+          borderRadius: 14,
           overflow: "hidden",
           alignItems: "center", justifyContent: "center",
           marginBottom: 6,
@@ -295,21 +296,21 @@ function ItemTile({ item, selected, onToggle }: { item: PantryItem; selected: bo
         {showPhoto ? (
           <Image
             source={{ uri: imgUri! }}
-            style={{ width: 48, height: 48 }}
+            style={{ width: 56, height: 56 }}
             contentFit="cover"
             onError={() => setImgError(true)}
             transition={200}
             cachePolicy="memory-disk"
           />
         ) : (
-          <Text style={{ fontSize: 26, lineHeight: 32 }}>{item.emoji}</Text>
+          <Text style={{ fontSize: 28, lineHeight: 34 }}>{item.emoji}</Text>
         )}
       </View>
 
-      {/* Name */}
+      {/* Name — 12px like web text-xs */}
       <Text
         style={{
-          fontSize: 10, lineHeight: 13, textAlign: "center",
+          fontSize: 12, lineHeight: 15, textAlign: "center",
           fontWeight: "500",
           color: selected ? "#15803d" : "#4b5563",
           paddingHorizontal: 2,
@@ -322,13 +323,12 @@ function ItemTile({ item, selected, onToggle }: { item: PantryItem; selected: bo
   );
 }
 
-// ─── Vertical category tab ────────────────────────────────────────────────────
-// Explicit pixel width = SIDEBAR_W so it never bleeds past the column
+// ─── Vertical category tab — matches web: w-20, border-l-4, text-2xl emoji ───
 function CategoryTab({ cat, active, onPress }: {
   cat: string; active: boolean; onPress: () => void;
 }) {
   const meta = CATEGORY_META[cat] || { emoji: "🛒" };
-  const shortLabel = (CAT_SHORT[cat] || cat).split(" ")[0]; // 1 word only — keeps it tight
+  const shortLabel = CAT_SHORT[cat] || cat;
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -337,21 +337,19 @@ function CategoryTab({ cat, active, onPress }: {
         width: SIDEBAR_W,
         alignItems: "center",
         justifyContent: "center",
-        paddingVertical: 12,
-        paddingHorizontal: 2,
-        borderBottomWidth: 1,
-        borderBottomColor: "#f3f4f6",
-        borderLeftWidth: 3,
-        borderLeftColor: active ? "#16a34a" : "transparent",
+        paddingVertical: 16,
+        paddingHorizontal: 4,
+        borderLeftWidth: 4,
+        borderLeftColor: active ? "#22c55e" : "transparent",
         backgroundColor: active ? "#f0fdf4" : "#ffffff",
       }}
     >
-      <Text style={{ fontSize: 18, lineHeight: 22 }}>{meta.emoji}</Text>
+      <Text style={{ fontSize: 24, lineHeight: 28 }}>{meta.emoji}</Text>
       <Text
         style={{
-          fontSize: 9,
-          lineHeight: 11,
-          marginTop: 4,
+          fontSize: 10,
+          lineHeight: 13,
+          marginTop: 6,
           textAlign: "center",
           fontWeight: "500",
           color: active ? "#15803d" : "#6b7280",
@@ -525,6 +523,17 @@ export default function PantryScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#f9fafb" }}>
+      <ScreenGuide
+        screenKey="pantry"
+        emoji="🥫"
+        title="Your Kitchen Pantry"
+        points={[
+          "Tap any item to toggle whether it's in stock.",
+          "Items in stock are skipped from your shopping list automatically.",
+          "Browse categories in the left sidebar — grains, dals, spices, etc.",
+          "Add custom items with the + button; we auto-categorize them.",
+        ]}
+      />
       {/* Toast */}
       {toast && (
         <View className="absolute top-14 left-4 right-4 z-50 bg-gray-800 rounded-2xl px-4 py-3"
@@ -538,7 +547,7 @@ export default function PantryScreen() {
         <View className="flex-row items-center justify-between mb-3">
           <View>
             <Text className="text-xl font-bold text-gray-800">Your Pantry</Text>
-            <Text className="text-xs text-gray-400 mt-0.5">Tap items you have at home</Text>
+            <Text className="text-xs text-gray-400 mt-0.5">Tap items you have · changes saved automatically</Text>
           </View>
           <View className="bg-green-50 border border-green-200 rounded-xl px-3 py-1.5 flex-row items-center gap-1">
             <Text className="text-base font-bold text-green-600">{totalSaved || selected.size}</Text>
@@ -602,40 +611,34 @@ export default function PantryScreen() {
             )
           )}
 
-          {/* Category view */}
+          {/* Category view — matches web: no category header, just IN PANTRY / ADD MORE */}
           {!isSearching && (
             <>
-              {/* Category label */}
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 10 }}>
-                <Text style={{ fontSize: 15 }}>{CATEGORY_META[activeCategory]?.emoji || "🛒"}</Text>
-                <Text style={{ fontSize: 13, fontWeight: "700", color: "#1f2937" }}>{activeCategory}</Text>
-                <Text style={{ fontSize: 11, color: "#9ca3af" }}>
-                  {inPantry.length}/{(allCategories[activeCategory] || []).length} stocked
-                </Text>
-              </View>
-
               {/* In Pantry */}
               {inPantry.length > 0 && (
-                <View style={{ marginBottom: 10 }}>
-                  <Text style={{ fontSize: 10, fontWeight: "600", color: "#16a34a", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
-                    In Pantry ✓
-                  </Text>
+                <View style={{ marginBottom: 12 }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 10 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "600", color: "#16a34a", textTransform: "uppercase", letterSpacing: 1 }}>
+                      In Pantry
+                    </Text>
+                    <Text style={{ fontSize: 12, fontWeight: "500", color: "#16a34a", marginLeft: 6 }}>
+                      ({inPantry.length})
+                    </Text>
+                  </View>
                   <TileGrid items={inPantry} tileW={tileW} selectedSet={selected} onToggle={toggle} />
                 </View>
               )}
 
               {inPantry.length > 0 && addMore.length > 0 && (
-                <View style={{ borderTopWidth: 1, borderTopColor: "#e5e7eb", borderStyle: "dashed", marginVertical: 10 }} />
+                <View style={{ borderTopWidth: 1, borderTopColor: "#e5e7eb", borderStyle: "dashed", marginVertical: 12 }} />
               )}
 
               {/* Add More */}
               {addMore.length > 0 && (
                 <View style={{ marginBottom: 16 }}>
-                  {inPantry.length > 0 && (
-                    <Text style={{ fontSize: 10, fontWeight: "600", color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
-                      Add More
-                    </Text>
-                  )}
+                  <Text style={{ fontSize: 12, fontWeight: "600", color: "#9ca3af", textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 }}>
+                    Add More
+                  </Text>
                   <TileGrid items={addMore} tileW={tileW} selectedSet={selected} onToggle={toggle} />
                 </View>
               )}
