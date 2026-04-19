@@ -9,12 +9,9 @@ import {
   NativeScrollEvent,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { C, F, R } from "../lib/theme";
 
-type Slide = {
-  emoji: string;
-  title: string;
-  body: string;
-};
+type Slide = { emoji: string; title: string; body: string };
 
 const SLIDES: Slide[] = [
   {
@@ -52,13 +49,13 @@ export default function WelcomeCarousel({ onDone }: { onDone: () => void }) {
   const isLast = index === SLIDES.length - 1;
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
-      {/* Top: Skip */}
-      <View className="flex-row justify-between items-center px-5 pt-3">
-        <Text className="text-base font-bold text-green-700">🏠 GharOS</Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.cream }}>
+      {/* Top bar */}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingTop: 12 }}>
+        <Text style={{ fontFamily: F.heading, fontSize: 18, color: C.primary }}>🏠 GharOS</Text>
         {!isLast && (
           <TouchableOpacity onPress={onDone} activeOpacity={0.7}>
-            <Text className="text-sm text-gray-400 font-medium">Skip</Text>
+            <Text style={{ fontFamily: F.body, fontSize: 14, color: C.inkMuted }}>Skip</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -70,21 +67,15 @@ export default function WelcomeCarousel({ onDone }: { onDone: () => void }) {
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         onMomentumScrollEnd={onScroll}
-        className="flex-1"
+        style={{ flex: 1 }}
       >
         {SLIDES.map((s, i) => (
-          <View
-            key={i}
-            style={{ width }}
-            className="flex-1 items-center justify-center px-8"
-          >
-            <Text style={{ fontSize: 80 }} className="mb-6">
-              {s.emoji}
-            </Text>
-            <Text className="text-2xl font-bold text-gray-800 text-center mb-3">
+          <View key={i} style={{ width, flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 36 }}>
+            <Text style={{ fontSize: 80, marginBottom: 28 }}>{s.emoji}</Text>
+            <Text style={{ fontFamily: F.headingBold, fontSize: 24, color: C.ink, textAlign: "center", marginBottom: 14 }}>
               {s.title}
             </Text>
-            <Text className="text-base text-gray-500 text-center leading-6">
+            <Text style={{ fontFamily: F.body, fontSize: 15, color: C.inkMuted, textAlign: "center", lineHeight: 24 }}>
               {s.body}
             </Text>
           </View>
@@ -92,26 +83,27 @@ export default function WelcomeCarousel({ onDone }: { onDone: () => void }) {
       </ScrollView>
 
       {/* Dots + CTA */}
-      <View className="px-6 pb-8">
-        <View className="flex-row justify-center gap-2 mb-6">
+      <View style={{ paddingHorizontal: 24, paddingBottom: 32 }}>
+        <View style={{ flexDirection: "row", justifyContent: "center", gap: 6, marginBottom: 24 }}>
           {SLIDES.map((_, i) => (
-            <View
-              key={i}
-              style={{
-                width: i === index ? 24 : 8,
-                height: 8,
-                borderRadius: 4,
-                backgroundColor: i === index ? "#16a34a" : "#d1d5db",
-              }}
-            />
+            <View key={i} style={{
+              width: i === index ? 24 : 8,
+              height: 8,
+              borderRadius: 4,
+              backgroundColor: i === index ? C.primary : C.border,
+            }} />
           ))}
         </View>
         <TouchableOpacity
           onPress={() => (isLast ? onDone() : goTo(index + 1))}
-          className="w-full py-4 bg-green-500 rounded-xl items-center"
+          style={{
+            width: "100%", paddingVertical: 16,
+            backgroundColor: C.primary, borderRadius: R.button,
+            alignItems: "center",
+          }}
           activeOpacity={0.8}
         >
-          <Text className="text-white font-semibold text-base">
+          <Text style={{ fontFamily: F.bodyMedium, fontSize: 15, color: C.white }}>
             {isLast ? "Let's go! 🚀" : "Next →"}
           </Text>
         </TouchableOpacity>

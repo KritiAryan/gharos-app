@@ -1,12 +1,10 @@
 import { useState } from "react";
-import {
-  View, Text, TouchableOpacity, ScrollView,
-  TextInput, ActivityIndicator,
-} from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, TextInput, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { supabase } from "../lib/supabase";
 import WelcomeCarousel from "../components/WelcomeCarousel";
+import { C, F, R } from "../lib/theme";
 
 const STEPS = ["Household", "Diet", "Cuisine", "Calories"];
 
@@ -20,8 +18,7 @@ const DIET_OPTIONS = [
 
 const CUISINE_OPTIONS = [
   "North Indian", "South Indian", "Maharashtrian",
-  "Gujarati", "Bengali", "Udupi",
-  "Continental", "Pan-Indian",
+  "Gujarati", "Bengali", "Udupi", "Continental", "Pan-Indian",
 ];
 
 export default function OnboardingScreen() {
@@ -29,21 +26,13 @@ export default function OnboardingScreen() {
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [showWelcome, setShowWelcome] = useState(false);
-  const [config, setConfig] = useState({
-    persons: 2,
-    diet: "",
-    cuisines: [] as string[],
-    calorieTarget: "",
-  });
+  const [config, setConfig] = useState({ persons: 2, diet: "", cuisines: [] as string[], calorieTarget: "" });
 
-  const update = (key: string, val: any) =>
-    setConfig((p) => ({ ...p, [key]: val }));
-
+  const update = (key: string, val: any) => setConfig((p) => ({ ...p, [key]: val }));
   const toggleCuisine = (c: string) => {
     const curr = config.cuisines;
     update("cuisines", curr.includes(c) ? curr.filter((x) => x !== c) : [...curr, c]);
   };
-
   const canContinue = () => {
     if (step === 1 && !config.diet) return false;
     if (step === 2 && config.cuisines.length === 0) return false;
@@ -55,8 +44,7 @@ export default function OnboardingScreen() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { router.replace("/login"); return; }
     await supabase.from("profiles").upsert({
-      id: session.user.id,
-      email: session.user.email,
+      id: session.user.id, email: session.user.email,
       full_name: session.user.user_metadata?.full_name || "",
       config: { ...config, guideSeen: { welcome: false } },
     });
@@ -65,57 +53,37 @@ export default function OnboardingScreen() {
   };
 
   const finishWelcome = async () => {
-    // mark welcome as seen so it never shows again
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
-      const { data } = await supabase
-        .from("profiles")
-        .select("config")
-        .eq("id", session.user.id)
-        .maybeSingle();
+      const { data } = await supabase.from("profiles").select("config").eq("id", session.user.id).maybeSingle();
       const existing = data?.config || {};
-      await supabase
-        .from("profiles")
-        .update({
-          config: {
-            ...existing,
-            guideSeen: { ...(existing.guideSeen || {}), welcome: true },
-          },
-        })
-        .eq("id", session.user.id);
+      await supabase.from("profiles").update({ config: { ...existing, guideSeen: { ...(existing.guideSeen || {}), welcome: true } } }).eq("id", session.user.id);
     }
     router.replace("/(tabs)");
   };
 
-  if (showWelcome) {
-    return <WelcomeCarousel onDone={finishWelcome} />;
-  }
+  if (showWelcome) return <WelcomeCarousel onDone={finishWelcome} />;
 
   const progress = ((step + 1) / STEPS.length) * 100;
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50">
-      <ScrollView
-        className="flex-1"
-        contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Logo */}
-        <View className="mb-6">
-          <Text className="text-2xl font-bold text-green-700">🏠 GharOS</Text>
-          <View className="flex-row items-center justify-between mt-2 mb-1">
-            <Text className="text-xs text-gray-400">Step {step + 1} of {STEPS.length}</Text>
-            <Text className="text-xs text-green-600 font-medium">{STEPS[step]}</Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: C.cream }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 20, paddingBottom: 40 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+
+        {/* Header */}
+        <View style={{ marginBottom: 24 }}>
+          <Text style={{ fontFamily: F.headingBold, fontSize: 22, color: C.primary }}>🏠 GharOS</Text>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10, marginBottom: 6 }}>
+            <Text style={{ fontFamily: F.body, fontSize: 12, color: C.inkMuted }}>Step {step + 1} of {STEPS.length}</Text>
+            <Text style={{ fontFamily: F.bodyMedium, fontSize: 12, color: C.primary }}>{STEPS[step]}</Text>
           </View>
           {/* Progress bar */}
-          <View className="w-full bg-gray-200 rounded-full h-2">
-            <View className="bg-green-500 h-2 rounded-full" style={{ width: `${progress}%` }} />
+          <View style={{ width: "100%", height: 6, backgroundColor: C.border, borderRadius: 3 }}>
+            <View style={{ width: `${progress}%`, height: 6, backgroundColor: C.primary, borderRadius: 3 }} />
           </View>
-          {/* Step dots */}
-          <View className="flex-row justify-between mt-2">
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 6 }}>
             {STEPS.map((s, i) => (
-              <Text key={s} className={`text-xs ${i === step ? "text-green-600 font-semibold" : "text-gray-300"}`}>
+              <Text key={s} style={{ fontFamily: i === step ? F.bodyMedium : F.body, fontSize: 11, color: i === step ? C.primary : C.border }}>
                 {s}
               </Text>
             ))}
@@ -123,36 +91,31 @@ export default function OnboardingScreen() {
         </View>
 
         {/* Card */}
-        <View className="bg-white rounded-2xl border border-gray-100 p-6"
-          style={{ elevation: 2 }}>
+        <View style={{ backgroundColor: C.card, borderRadius: R.card, borderWidth: 1, borderColor: C.border, padding: 24 }}>
 
           {/* Step 0 — Household */}
           {step === 0 && (
             <View>
-              <Text className="text-xl font-bold text-gray-800 mb-1">
+              <Text style={{ fontFamily: F.headingBold, fontSize: 20, color: C.ink, marginBottom: 6 }}>
                 How many people are you cooking for?
               </Text>
-              <Text className="text-gray-400 text-sm mb-6">
+              <Text style={{ fontFamily: F.body, fontSize: 13, color: C.inkMuted, marginBottom: 28 }}>
                 We'll use this to scale ingredient quantities.
               </Text>
-              <View className="flex-row items-center gap-8 justify-center mt-2">
-                <TouchableOpacity
-                  onPress={() => update("persons", Math.max(1, config.persons - 1))}
-                  className="w-14 h-14 rounded-full bg-gray-100 items-center justify-center"
-                  activeOpacity={0.7}
-                >
-                  <Text className="text-2xl font-bold text-gray-600">−</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 32 }}>
+                <TouchableOpacity onPress={() => update("persons", Math.max(1, config.persons - 1))}
+                  style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: C.accentLight, borderWidth: 1, borderColor: C.border, alignItems: "center", justifyContent: "center" }}
+                  activeOpacity={0.7}>
+                  <Text style={{ fontFamily: F.headingBold, fontSize: 22, color: C.primary }}>−</Text>
                 </TouchableOpacity>
-                <Text className="text-5xl font-bold text-green-600">{config.persons}</Text>
-                <TouchableOpacity
-                  onPress={() => update("persons", Math.min(10, config.persons + 1))}
-                  className="w-14 h-14 rounded-full bg-gray-100 items-center justify-center"
-                  activeOpacity={0.7}
-                >
-                  <Text className="text-2xl font-bold text-gray-600">+</Text>
+                <Text style={{ fontFamily: F.headingBold, fontSize: 52, color: C.primary }}>{config.persons}</Text>
+                <TouchableOpacity onPress={() => update("persons", Math.min(10, config.persons + 1))}
+                  style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: C.accentLight, borderWidth: 1, borderColor: C.border, alignItems: "center", justifyContent: "center" }}
+                  activeOpacity={0.7}>
+                  <Text style={{ fontFamily: F.headingBold, fontSize: 22, color: C.primary }}>+</Text>
                 </TouchableOpacity>
               </View>
-              <Text className="text-center text-gray-400 text-sm mt-4">
+              <Text style={{ fontFamily: F.body, fontSize: 13, color: C.inkMuted, textAlign: "center", marginTop: 14 }}>
                 {config.persons === 1 ? "Cooking for yourself 🧑‍🍳" : `Cooking for ${config.persons} people 👨‍👩‍👧`}
               </Text>
             </View>
@@ -161,33 +124,25 @@ export default function OnboardingScreen() {
           {/* Step 1 — Diet */}
           {step === 1 && (
             <View>
-              <Text className="text-xl font-bold text-gray-800 mb-1">
+              <Text style={{ fontFamily: F.headingBold, fontSize: 20, color: C.ink, marginBottom: 6 }}>
                 What's your diet preference?
               </Text>
-              <Text className="text-gray-400 text-sm mb-5">
+              <Text style={{ fontFamily: F.body, fontSize: 13, color: C.inkMuted, marginBottom: 20 }}>
                 This shapes every meal we suggest.
               </Text>
-              <View className="gap-3">
-                {DIET_OPTIONS.map((d) => (
-                  <TouchableOpacity
-                    key={d.value}
-                    onPress={() => update("diet", d.value)}
-                    className={`w-full px-4 py-3 rounded-xl border-2 ${
-                      config.diet === d.value
-                        ? "border-green-500 bg-green-50"
-                        : "border-gray-100 bg-gray-50"
-                    }`}
-                    activeOpacity={0.7}
-                  >
-                    <Text className={`text-sm ${
-                      config.diet === d.value
-                        ? "text-green-700 font-semibold"
-                        : "text-gray-600"
-                    }`}>
-                      {d.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={{ gap: 10 }}>
+                {DIET_OPTIONS.map((d) => {
+                  const active = config.diet === d.value;
+                  return (
+                    <TouchableOpacity key={d.value} onPress={() => update("diet", d.value)}
+                      style={{ paddingHorizontal: 16, paddingVertical: 14, borderRadius: R.button, borderWidth: 1.5, borderColor: active ? C.primary : C.border, backgroundColor: active ? C.accentLight : C.cream }}
+                      activeOpacity={0.7}>
+                      <Text style={{ fontFamily: active ? F.bodyMedium : F.body, fontSize: 14, color: active ? C.primary : C.inkMuted }}>
+                        {d.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </View>
           )}
@@ -195,36 +150,28 @@ export default function OnboardingScreen() {
           {/* Step 2 — Cuisine */}
           {step === 2 && (
             <View>
-              <Text className="text-xl font-bold text-gray-800 mb-1">
+              <Text style={{ fontFamily: F.headingBold, fontSize: 20, color: C.ink, marginBottom: 6 }}>
                 Which cuisines do you enjoy?
               </Text>
-              <Text className="text-gray-400 text-sm mb-5">
+              <Text style={{ fontFamily: F.body, fontSize: 13, color: C.inkMuted, marginBottom: 20 }}>
                 Pick as many as you like.
               </Text>
-              <View className="flex-row flex-wrap gap-2">
-                {CUISINE_OPTIONS.map((c) => (
-                  <TouchableOpacity
-                    key={c}
-                    onPress={() => toggleCuisine(c)}
-                    className={`px-4 py-2 rounded-full border-2 ${
-                      config.cuisines.includes(c)
-                        ? "border-green-500 bg-green-50"
-                        : "border-gray-200 bg-white"
-                    }`}
-                    activeOpacity={0.7}
-                  >
-                    <Text className={`text-sm ${
-                      config.cuisines.includes(c)
-                        ? "text-green-700 font-semibold"
-                        : "text-gray-500"
-                    }`}>
-                      {c}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {CUISINE_OPTIONS.map((c) => {
+                  const active = config.cuisines.includes(c);
+                  return (
+                    <TouchableOpacity key={c} onPress={() => toggleCuisine(c)}
+                      style={{ paddingHorizontal: 16, paddingVertical: 8, borderRadius: R.pill, borderWidth: 1.5, borderColor: active ? C.primary : C.border, backgroundColor: active ? C.accentLight : C.card }}
+                      activeOpacity={0.7}>
+                      <Text style={{ fontFamily: active ? F.bodyMedium : F.body, fontSize: 13, color: active ? C.primary : C.inkMuted }}>
+                        {c}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
               {config.cuisines.length > 0 && (
-                <Text className="text-xs text-green-600 mt-3">
+                <Text style={{ fontFamily: F.body, fontSize: 12, color: C.primary, marginTop: 10 }}>
                   {config.cuisines.length} selected ✓
                 </Text>
               )}
@@ -234,66 +181,57 @@ export default function OnboardingScreen() {
           {/* Step 3 — Calories */}
           {step === 3 && (
             <View>
-              <Text className="text-xl font-bold text-gray-800 mb-1">
+              <Text style={{ fontFamily: F.headingBold, fontSize: 20, color: C.ink, marginBottom: 6 }}>
                 Daily calorie target
               </Text>
-              <Text className="text-gray-400 text-sm mb-5">
+              <Text style={{ fontFamily: F.body, fontSize: 13, color: C.inkMuted, marginBottom: 20 }}>
                 Optional — we'll show a soft alert if a day goes over.
               </Text>
-              <View className="relative">
+              <View style={{ position: "relative" }}>
                 <TextInput
                   placeholder="e.g. 2000"
                   value={config.calorieTarget}
                   onChangeText={(v) => update("calorieTarget", v)}
                   keyboardType="number-pad"
-                  className="border-2 border-gray-200 rounded-xl px-4 py-3 text-gray-700 text-lg"
+                  style={{ borderWidth: 1, borderColor: C.border, borderRadius: R.input, paddingHorizontal: 16, paddingVertical: 14, fontFamily: F.body, fontSize: 16, color: C.ink, backgroundColor: C.cream }}
+                  placeholderTextColor={C.inkFaint}
                 />
-                <Text className="absolute right-4 top-3.5 text-gray-400 text-sm">
+                <Text style={{ position: "absolute", right: 16, top: 15, fontFamily: F.body, fontSize: 13, color: C.inkMuted }}>
                   kcal / day
                 </Text>
               </View>
-              <Text className="text-xs text-gray-400 mt-3">
+              <Text style={{ fontFamily: F.body, fontSize: 12, color: C.inkMuted, marginTop: 10 }}>
                 💡 Average Indian adult needs 1800–2200 kcal/day
               </Text>
-              <Text className="text-xs text-gray-400 mt-1">
+              <Text style={{ fontFamily: F.body, fontSize: 12, color: C.inkFaint, marginTop: 4 }}>
                 Leave blank to skip.
               </Text>
             </View>
           )}
 
           {/* Navigation */}
-          <View className="flex-row justify-between mt-8 gap-3">
+          <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 28, gap: 10 }}>
             {step > 0 ? (
-              <TouchableOpacity
-                onPress={() => setStep((s) => s - 1)}
-                className="px-5 py-3 rounded-xl border-2 border-gray-200"
-                activeOpacity={0.7}
-              >
-                <Text className="text-gray-500 text-sm font-medium">← Back</Text>
+              <TouchableOpacity onPress={() => setStep((s) => s - 1)}
+                style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: R.button, borderWidth: 1, borderColor: C.border }}
+                activeOpacity={0.7}>
+                <Text style={{ fontFamily: F.bodyMedium, fontSize: 13, color: C.inkMuted }}>← Back</Text>
               </TouchableOpacity>
             ) : <View />}
 
             {step < STEPS.length - 1 ? (
-              <TouchableOpacity
-                onPress={() => setStep((s) => s + 1)}
-                disabled={!canContinue()}
-                className="flex-1 py-3 bg-green-500 rounded-xl items-center"
-                style={{ opacity: canContinue() ? 1 : 0.4 }}
-                activeOpacity={0.8}
-              >
-                <Text className="text-white font-semibold text-sm">Continue →</Text>
+              <TouchableOpacity onPress={() => setStep((s) => s + 1)} disabled={!canContinue()}
+                style={{ flex: 1, paddingVertical: 14, backgroundColor: C.primary, borderRadius: R.button, alignItems: "center", opacity: canContinue() ? 1 : 0.4 }}
+                activeOpacity={0.8}>
+                <Text style={{ fontFamily: F.bodyMedium, fontSize: 14, color: C.white }}>Continue →</Text>
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity
-                onPress={finish}
-                disabled={saving}
-                className="flex-1 py-3 bg-green-500 rounded-xl items-center"
-                style={{ opacity: saving ? 0.6 : 1 }}
-                activeOpacity={0.8}
-              >
+              <TouchableOpacity onPress={finish} disabled={saving}
+                style={{ flex: 1, paddingVertical: 14, backgroundColor: C.primary, borderRadius: R.button, alignItems: "center", opacity: saving ? 0.6 : 1 }}
+                activeOpacity={0.8}>
                 {saving
-                  ? <ActivityIndicator color="white" />
-                  : <Text className="text-white font-semibold text-sm">Let's go! 🚀</Text>
+                  ? <ActivityIndicator color={C.white} />
+                  : <Text style={{ fontFamily: F.bodyMedium, fontSize: 14, color: C.white }}>Let's go! 🚀</Text>
                 }
               </TouchableOpacity>
             )}
