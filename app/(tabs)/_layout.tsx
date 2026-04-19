@@ -1,7 +1,7 @@
 import { Tabs } from "expo-router";
 import { View, Text } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { C, F } from "../lib/theme";
+import { C, F } from "../../lib/theme";
 
 type TabIconProps = { focused: boolean; emoji: string; label: string };
 
