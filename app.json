@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "gharosapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
@@ -20,7 +20,9 @@
       },
       "edgeToEdgeEnabled": false,
       "predictiveBackGestureEnabled": false,
-      "package": "com.kritiaryan.gharosapp"
+      "package": "com.kritiaryan.gharosapp",
+      "enableProguardInReleaseBuilds": true,
+      "enableShrinkResourcesInReleaseBuilds": true
     },
     "web": {
       "output": "static",

@@ -1,9 +1,9 @@
-// LLM Service — Zero Gemini dependency for core flows
+// LLM Service — All agents use llama-4-scout (30K TPM free tier)
 // ─────────────────────────────────────────────────────────────────────────────
-// Agent A  (suggestions)  → Groq gpt-oss-120b   (1 000 RPD free)
-// Agent B  (recipe fetch)  → Jina Reader + Groq gpt-oss-120b  (no Gemini needed)
-// Agent C  (weekly plan)   → Groq llama-3.1-8b  (14 400 RPD free)
-// Agent D  (shopping list) → Groq llama-3.1-8b  (14 400 RPD free)
+// Agent A  (suggestions)  → Groq llama-4-scout  (30K TPM, 1K RPD free)
+// Agent B  (recipe fetch)  → Jina Reader + Groq llama-4-scout
+// Agent C  (weekly plan)   → Groq llama-4-scout
+// Agent D  (shopping list) → Groq llama-4-scout
 // Fallback (Groq down)     → Gemini 2.0 Flash Lite (last resort only)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -16,20 +16,15 @@ const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-// Model routing — optimised for FREE TIER token-per-minute (TPM) limits
+// Model routing — all agents use llama-4-scout (best free tier: 30K TPM, 500K TPD)
 //
-// | Model                    | RPM | RPD   | TPM   | TPD   |
-// |--------------------------|-----|-------|-------|-------|
-// | gpt-oss-120b             |  30 | 1 000 | 8 000 | 200K  |  ← Agent A (big prompt, infrequent)
-// | llama-3.3-70b-versatile  |  30 | 1 000 | 12000 | 100K  |  ← Agent B extraction (needs accuracy)
-// | llama-3.1-8b-instant     |  30 | 14400 | 6 000 | 500K  |  ← Agent C/D (small prompts only)
-//
-// CRITICAL: free tier TPM is tiny. Prompts MUST be compressed.
-// Agent C + D prompts are kept under 1500 tokens each.
+// | Model                              | RPM | RPD   | TPM   | TPD   |
+// |------------------------------------|-----|-------|-------|-------|
+// | llama-4-scout-17b-16e-instruct     |  30 | 1 000 | 30000 | 500K  |  ← All agents
 
-const GROQ_MODEL_A  = "openai/gpt-oss-120b";       // Suggestions (infrequent, big prompt OK)
-const GROQ_MODEL_B  = "llama-3.3-70b-versatile";    // Recipe extraction (highest TPM = 12K)
-const GROQ_MODEL_CD = "llama-3.1-8b-instant";       // Plan + shopping (small, frequent)
+const GROQ_MODEL_A  = "meta-llama/llama-4-scout-17b-16e-instruct";
+const GROQ_MODEL_B  = "meta-llama/llama-4-scout-17b-16e-instruct";
+const GROQ_MODEL_CD = "meta-llama/llama-4-scout-17b-16e-instruct";
 
 // Gemini only used as fallback if Groq is completely down
 const GEMINI_FALLBACK_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`;
@@ -41,7 +36,14 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 const parseJSON = (text) => {
   try {
     const cleaned = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleaned);
+    // Try direct parse first
+    try { return JSON.parse(cleaned); } catch {}
+    // Extract first JSON array [...] or object {...} from anywhere in the text
+    const arrMatch = cleaned.match(/\[[\s\S]*\]/);
+    if (arrMatch) return JSON.parse(arrMatch[0]);
+    const objMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (objMatch) return JSON.parse(objMatch[0]);
+    return null;
   } catch {
     return null;
   }
@@ -375,9 +377,7 @@ const normaliseIngredient = (name) =>
 
 const isInPantry = (itemName, pantryNormalised) => {
   const n = normaliseIngredient(itemName);
-  return pantryNormalised.some(
-    (p) => p === n || p.includes(n) || n.includes(p)
-  );
+  return pantryNormalised.some((p) => p === n);
 };
 
 export const generateShoppingList = async ({ meals, pantry, persons = 2 }) => {

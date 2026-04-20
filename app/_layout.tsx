@@ -22,7 +22,7 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   const router = useRouter();
 
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Lora_600SemiBold,
     Lora_700Bold,
     DMSans_400Regular,
@@ -30,8 +30,9 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync();
-  }, [fontsLoaded]);
+    // Hide splash whether fonts loaded OR failed — never hang on splash screen
+    if (fontsLoaded || fontError) SplashScreen.hideAsync();
+  }, [fontsLoaded, fontError]);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
@@ -42,7 +43,8 @@ export default function RootLayout() {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (!fontsLoaded) return null;
+  // App opens even if fonts fail — system fonts used as fallback
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <TimerProvider>
