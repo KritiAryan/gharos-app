@@ -45,9 +45,16 @@ type DailyCookCard = {
   slots: QuickCookSlot[];
 };
 
+type WeekdayEveningTask = {
+  day: string;
+  description: string;
+  estimatedMinutes: number;
+};
+
 type PrepPlan = {
   weekendPrep: PrepSession[];
   dailyCookCards: DailyCookCard[];
+  weekdayEveningPrep?: WeekdayEveningTask[];
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -109,7 +116,11 @@ function formatTimerPreview(seconds: number): string {
 function TimerButton({ seconds, label }: { seconds: number; label: string }) {
   const { startTimer, timer } = useTimer();
 
-  const handlePress = () => {
+  const handlePress = (e?: any) => {
+    // Stop event bubbling up to parent task row (so tapping timer doesn't mark task done)
+    if (e?.stopPropagation) e.stopPropagation();
+    if (e?.preventDefault) e.preventDefault();
+
     if (timer.active) {
       Alert.alert(
         "Timer Running",
@@ -125,21 +136,23 @@ function TimerButton({ seconds, label }: { seconds: number; label: string }) {
   };
 
   return (
-    <TouchableOpacity
-      onPress={handlePress}
-      activeOpacity={0.7}
+    // View captures the touch responder first, preventing bubble-up to parent TouchableOpacity
+    <View
+      onStartShouldSetResponder={() => true}
+      onResponderRelease={handlePress}
       style={{
         flexDirection: "row", alignItems: "center", gap: 4,
         backgroundColor: "#eff6ff", borderWidth: 1, borderColor: "#bfdbfe",
         borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4,
         marginTop: 4,
+        cursor: "pointer" as any,
       }}
     >
       <Text style={{ fontSize: 11 }}>⏱</Text>
       <Text style={{ fontSize: 10, fontWeight: "600", color: "#2563eb" }}>
         {formatTimerPreview(seconds)}
       </Text>
-    </TouchableOpacity>
+    </View>
   );
 }
 
@@ -176,9 +189,19 @@ function WeekendPrepView({
 }) {
   const [expandedDay, setExpandedDay] = useState<string>("saturday");
 
+  // Hide empty groups + sessions with no tasks so "Marination — None required" etc. never show
+  const cleanedSessions = weekendPrep
+    .map((s) => ({
+      ...s,
+      taskGroups: s.taskGroups.filter((g) => g.tasks && g.tasks.length > 0),
+    }))
+    .filter((s) => s.taskGroups.length > 0);
+
+  if (cleanedSessions.length === 0) return null;
+
   return (
     <View>
-      {weekendPrep.map((session) => {
+      {cleanedSessions.map((session) => {
         const isExpanded = expandedDay === session.day;
         const allTasks = session.taskGroups.flatMap((g) => g.tasks);
         const doneCount = allTasks.filter((t) => checked[t.id]).length;
@@ -334,6 +357,127 @@ function WeekendPrepView({
           </View>
         );
       })}
+    </View>
+  );
+}
+
+// ─── Weekday Evening Prep Section ────────────────────────────────────────────
+// Short day-before tasks (soaking rajma the evening before, marinating paneer
+// the night before, etc.). These intentionally do NOT live in weekend prep —
+// soaking on Sunday for Thursday doesn't make sense.
+const EVENING_DAY_LABEL: Record<string, string> = {
+  sunday: "Sunday evening",
+  monday: "Monday evening",
+  tuesday: "Tuesday evening",
+  wednesday: "Wednesday evening",
+  thursday: "Thursday evening",
+  friday: "Friday evening",
+  saturday: "Saturday evening",
+};
+
+function WeekdayEveningPrepView({
+  tasks, checked, onToggle,
+}: {
+  tasks: WeekdayEveningTask[];
+  checked: Record<string, boolean>;
+  onToggle: (id: string) => void;
+}) {
+  if (!tasks || tasks.length === 0) return null;
+
+  // Group by day so "Wednesday evening: soak rajma" reads cleanly
+  const byDay = tasks.reduce<Record<string, Array<WeekdayEveningTask & { id: string }>>>(
+    (acc, t, idx) => {
+      const id = `eve_${t.day}_${idx}`;
+      if (!acc[t.day]) acc[t.day] = [];
+      acc[t.day].push({ ...t, id });
+      return acc;
+    },
+    {}
+  );
+
+  const dayOrder = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const sortedDays = Object.keys(byDay).sort(
+    (a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b)
+  );
+
+  return (
+    <View style={{ marginBottom: 16 }}>
+      <View style={{
+        flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10,
+      }}>
+        <Text style={{ fontSize: 16 }}>🌙</Text>
+        <Text style={{ fontSize: 14, fontWeight: "700", color: "#1f2937" }}>
+          Evening-before prep
+        </Text>
+      </View>
+      <Text style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>
+        Quick tasks (like soaking) to do the night before the dish is cooked.
+      </Text>
+
+      <View style={{ gap: 8 }}>
+        {sortedDays.map((day) => (
+          <View key={day} style={{
+            backgroundColor: "#fff", borderRadius: 16,
+            borderWidth: 1, borderColor: "#f3f4f6",
+            overflow: "hidden", elevation: 1,
+          }}>
+            <View style={{
+              paddingHorizontal: 16, paddingVertical: 10,
+              backgroundColor: "#eef2ff", borderBottomWidth: 1, borderBottomColor: "#e0e7ff",
+            }}>
+              <Text style={{ fontSize: 12, fontWeight: "600", color: "#4338ca" }}>
+                {EVENING_DAY_LABEL[day] || day}
+              </Text>
+            </View>
+            {byDay[day].map((task, ti) => {
+              const isDone = !!checked[task.id];
+              return (
+                <TouchableOpacity
+                  key={task.id}
+                  onPress={() => onToggle(task.id)}
+                  activeOpacity={0.7}
+                  style={{
+                    flexDirection: "row", alignItems: "flex-start", gap: 12,
+                    paddingHorizontal: 16, paddingVertical: 12,
+                    borderBottomWidth: ti < byDay[day].length - 1 ? 1 : 0,
+                    borderBottomColor: "#f9fafb",
+                    backgroundColor: isDone ? "#f0fdf4" : "#fff",
+                  }}
+                >
+                  <View style={{
+                    width: 22, height: 22, borderRadius: 11,
+                    borderWidth: 2, marginTop: 1,
+                    borderColor: isDone ? "#22c55e" : "#d1d5db",
+                    backgroundColor: isDone ? "#22c55e" : "transparent",
+                    alignItems: "center", justifyContent: "center",
+                  }}>
+                    {isDone && (
+                      <Text style={{ color: "#fff", fontSize: 11, fontWeight: "700" }}>✓</Text>
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{
+                      fontSize: 13, color: isDone ? "#9ca3af" : "#1f2937",
+                      textDecorationLine: isDone ? "line-through" : "none",
+                      lineHeight: 18,
+                    }}>
+                      {task.description}
+                    </Text>
+                    <Text style={{
+                      fontSize: 10, color: "#6b7280", marginTop: 4,
+                      backgroundColor: "#f3f4f6",
+                      paddingHorizontal: 6, paddingVertical: 2,
+                      borderRadius: 6, alignSelf: "flex-start",
+                    }}>
+                      ⏱ {task.estimatedMinutes} min
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
@@ -755,11 +899,16 @@ export default function MealPrepScreen() {
     });
   };
 
-  // Count all prep tasks
+  // Count all prep tasks (weekend + evening-before)
   const allPrepTasks = (prepPlan?.weekendPrep || []).flatMap((s) =>
     s.taskGroups.flatMap((g) => g.tasks)
   );
-  const donePrepCount = allPrepTasks.filter((t) => checked[t.id]).length;
+  const eveningTasks = prepPlan?.weekdayEveningPrep || [];
+  const eveningTaskIds = eveningTasks.map((_, idx) => `eve_${eveningTasks[idx].day}_${idx}`);
+  const totalPrepCount = allPrepTasks.length + eveningTaskIds.length;
+  const donePrepCount =
+    allPrepTasks.filter((t) => checked[t.id]).length +
+    eveningTaskIds.filter((id) => checked[id]).length;
 
   // Count all cook tasks
   const allCookStepIds = (prepPlan?.dailyCookCards || []).flatMap((card) =>
@@ -860,7 +1009,7 @@ export default function MealPrepScreen() {
               fontSize: 13, fontWeight: "600",
               color: activeTab === "prep" ? "#b45309" : "#9ca3af",
             }}>
-              🔪 Weekend Prep ({donePrepCount}/{allPrepTasks.length})
+              🔪 Weekend Prep ({donePrepCount}/{totalPrepCount})
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -889,7 +1038,7 @@ export default function MealPrepScreen() {
       >
         {activeTab === "prep" ? (
           <>
-            <ProgressBar done={donePrepCount} total={allPrepTasks.length} />
+            <ProgressBar done={donePrepCount} total={totalPrepCount} />
 
             {/* Tip */}
             <View style={{
@@ -905,6 +1054,12 @@ export default function MealPrepScreen() {
 
             <WeekendPrepView
               weekendPrep={prepPlan.weekendPrep}
+              checked={checked}
+              onToggle={toggleTask}
+            />
+
+            <WeekdayEveningPrepView
+              tasks={prepPlan.weekdayEveningPrep || []}
               checked={checked}
               onToggle={toggleTask}
             />

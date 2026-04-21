@@ -367,17 +367,79 @@ Return ONLY valid JSON array.`;
 // AGENT D — Shopping List Generator
 // ─────────────────────────────────────────────────────────────────────────────
 const normaliseIngredient = (name) =>
-  name
+  (name || "")
     .toLowerCase()
     .trim()
-    .replace(/\b(powder|pwd|seeds|seed|leaves|leaf|oil|paste|fresh|dried|ground|whole|raw|roasted|chopped|sliced|grated)\b/g, "")
-    .replace(/s$/, "")
+    // Pantry IDs come in as "toor_dal", "red_chilli" — treat underscores as spaces
+    .replace(/_/g, " ")
+    // Strip parens and their contents e.g. "hing (asafoetida)" → "hing"
+    .replace(/\([^)]*\)/g, " ")
+    // Common modifiers / prep words that shouldn't affect identity
+    .replace(/\b(powder|pwd|masala|seeds?|leaves?|leaf|oil|paste|fresh|dried|ground|whole|raw|roasted|chopped|sliced|grated|minced|crushed|finely|coarsely|cooking|edible|organic|ripe|unripe|small|medium|large|big)\b/g, " ")
+    // Colour adjectives (so "red chilli powder" → "chilli")
+    .replace(/\b(red|green|yellow|white|black|brown)\b/g, " ")
+    // Basic plural normalisation
+    .replace(/ies\b/g, "y")        // curries → curry
+    .replace(/oes\b/g, "o")        // tomatoes → tomato
+    .replace(/s\b/g, "")           // onions → onion
     .replace(/\s+/g, " ")
     .trim();
 
+// Shared synonyms — pantry word on left, LLM may call it anything on right
+const PANTRY_SYNONYMS = {
+  "rajma":        ["kidney bean", "red kidney bean"],
+  "chana":        ["chickpea", "garbanzo", "kabuli chana"],
+  "chana dal":    ["split chickpea", "bengal gram"],
+  "toor dal":     ["arhar dal", "pigeon pea", "split pigeon pea"],
+  "moong dal":    ["mung bean", "split mung", "green gram"],
+  "masoor dal":   ["lentil", "split lentil"],
+  "urad dal":     ["gram", "split gram"],
+  "atta":         ["wheat flour", "whole wheat flour"],
+  "besan":        ["gram flour", "chickpea flour"],
+  "sooji":        ["semolina", "rava", "suji"],
+  "poha":         ["flattened rice", "beaten rice"],
+  "curd":         ["yogurt", "yoghurt", "dahi"],
+  "paneer":       ["cottage cheese", "indian cheese"],
+  "ghee":         ["clarified butter"],
+  "hing":         ["asafoetida", "asafetida"],
+  "jaggery":      ["gur"],
+  "coriander":    ["cilantro", "dhania"],
+  "chilli":       ["chili", "chile"],
+  "cumin":        ["jeera"],
+  "turmeric":     ["haldi"],
+  "mustard":      ["rai", "sarson"],
+  "curry leave":  ["kadi patta"],
+  "lemon":        ["lime", "nimbu"],
+};
+
+// Is this item effectively the same as something in the pantry?
 const isInPantry = (itemName, pantryNormalised) => {
   const n = normaliseIngredient(itemName);
-  return pantryNormalised.some((p) => p === n);
+  if (!n) return false;
+  const nWords = new Set(n.split(" ").filter(Boolean));
+
+  for (const p of pantryNormalised) {
+    if (!p) continue;
+    if (p === n) return true;
+
+    // Word-level containment: every word of pantry term appears in item name.
+    // Handles "tomato" vs "ripe tomato", "toor dal" vs "toor dal split" etc.
+    const pWords = p.split(" ").filter(Boolean);
+    if (pWords.length > 0 && pWords.every((w) => nWords.has(w))) return true;
+
+    // Synonym check
+    const syns = PANTRY_SYNONYMS[p];
+    if (syns) {
+      for (const s of syns) {
+        const sNorm = normaliseIngredient(s);
+        if (!sNorm) continue;
+        if (sNorm === n) return true;
+        const sWords = sNorm.split(" ").filter(Boolean);
+        if (sWords.length > 0 && sWords.every((w) => nWords.has(w))) return true;
+      }
+    }
+  }
+  return false;
 };
 
 export const generateShoppingList = async ({ meals, pantry, persons = 2 }) => {
@@ -385,13 +447,14 @@ export const generateShoppingList = async ({ meals, pantry, persons = 2 }) => {
     .map((p) => (typeof p === "string" ? p : p?.name || ""))
     .filter(Boolean);
 
-  const pantryNames = pantryArr.join(", ");
+  // Give the LLM human-readable pantry names (not "toor_dal")
+  const pantryDisplay = pantryArr.map((p) => p.replace(/_/g, " ")).join(", ");
   const pantryNormalised = pantryArr.map(normaliseIngredient);
 
   const mealNames = meals.map((m) => m.name).join(", ");
 
   const prompt = `Shopping list for ${persons} people. Meals:${mealNames}
-${pantryNames ? `PANTRY (absolutely do NOT include these or any variation of them): ${pantryNames}` : ""}
+${pantryDisplay ? `PANTRY — ABSOLUTELY DO NOT include these OR any variant/synonym/plural/prep-form of them (e.g. if pantry has "tomato" skip "ripe tomato"/"tomatoes"; if pantry has "rajma" skip "kidney beans"; if pantry has "jeera" skip "cumin"): ${pantryDisplay}` : ""}
 Combine duplicates. Exclude water/ice. Lowercase names. Add estimatedPriceINR = typical Indian kirana/grocery store price for that quantity (e.g. 1kg onion=40, 200g paneer=60, 1L oil=140).
 JSON:[{"name":"x","quantity":"1","unit":"kg","category":"Vegetables & Greens|Dairy & Paneer|Grains & Pulses|Spices & Masalas|Oil & Condiments|Nuts & Dry Fruits|Other","estimatedPriceINR":40}]
 Return ONLY valid JSON array.`;
@@ -432,22 +495,68 @@ export const generatePrepPlan = async ({ selectedMeals, weeklyPlan }) => {
     })
   ).filter(Boolean);
 
-  const prompt = `You are a meal prep assistant for Indian home cooking. Target user: working professional who preps on weekends and needs to cook each weekday meal in 15-20 min max.
+  const prompt = `You are a meal prep assistant for Indian home cooking. Target user: working professional who preps on weekends so weekday cooking is 15-20 min max.
 
-MEALS THIS WEEK:
+MEALS THIS WEEK (Day 1 = Monday, Day 7 = Sunday):
 ${mealSummaries.join("\n\n")}
 
-GENERATE a weekend prep plan. RULES:
-1. Identify ALL tasks doable ahead: chopping vegetables, soaking lentils/beans overnight, making onion-tomato base/paste, boiling potatoes/dal, cooking gravies that keep well, marinating, portioning dry spice mixes, making dough
-2. CONSOLIDATE across meals: "Chop 6 onions total (for Dal Makhani, Chole, Aloo Sabzi)" — not per dish
-3. Split into Saturday (heavier: gravies, bases, soaking, cooking) and Sunday (lighter: chopping, portioning, final prep, marinating)
-4. Saturday prep should take 60-90 min, Sunday 30-45 min
-5. Each weekday remaining cook time MUST be 15-20 min max
-6. Add practical storage notes (fridge in container, freezer, room temp)
-7. For dailyCookCards, list ONLY remaining quick steps after weekend prep
+STRICT RULES — only include prep tasks that genuinely save weekday time:
+
+✅ INCLUDE these types of prep:
+1. CHOPPING — onions, tomatoes, ginger, garlic, vegetables. Only prep what stays fresh 3-5 days in fridge. Consolidate across meals ("Chop 6 onions total for Mon/Wed/Fri meals").
+2. COOKING BASES — onion-tomato masala, gravy bases, ginger-garlic paste. MUST include actual cooking instructions (e.g. "Heat 3 tbsp oil, sauté 4 chopped onions until golden (8 min), add 3 tomatoes, cook till oil separates (5 min), blend smooth").
+3. GRAVIES/CURRIES that keep 3-5 days refrigerated — only if the dish benefits from it.
+4. DOUGH — roti/paratha dough lasts 2 days in fridge.
+5. DRY SPICE BLENDS — only if it's a unique custom blend used in multiple dishes (not standard turmeric/salt).
+
+❌ DO NOT INCLUDE:
+- Boiling water (do it real-time)
+- Soaking lentils/beans on weekend (soak overnight before the day they're used, NOT 3-4 days ahead — freshness matters)
+- Marinating more than 24 hours ahead (meat/paneer deteriorates)
+- Portioning salt/turmeric/basic spices (no time saved)
+- Final plating portioning
+- Pre-cooking rice (reheated rice is worse; cook fresh daily)
+- Anything that takes under 2 min real-time
+
+SOAKING SPECIFIC RULE:
+- Rajma/chickpeas/kidney beans need 8-10 hr soak. Put soaking tasks on the EVENING BEFORE the meal day, NOT on Saturday/Sunday blanket.
+- Example: Rajma used on Thursday → soak task goes in "Wednesday Evening Prep", not weekend prep.
+
+MARINATION RULE:
+- If no dish requires marination, DO NOT include a marination section at all. Skip it entirely.
+- If marination is needed, put it 4-12 hours before the meal day, not on the weekend.
+
+CONSOLIDATION RULE:
+- Never suggest portioning or splitting tasks that take under 5 minutes total
+- Group tasks across multiple meals: "Make 3 cups onion-tomato base (for Mon Dal, Wed Paneer, Fri Chole)"
+
+STRUCTURE:
+- Saturday = heavier cooking (bases, gravies that keep)
+- Sunday = lighter (chopping, dough, preparing spice blends)
+- weekdayEveningPrep = day-before soaking/marinating with specific day
+- Saturday total time 45-75 min, Sunday 20-40 min
+- Only include a day if it has meaningful tasks
 
 JSON format:
-{"weekendPrep":[{"day":"saturday","estimatedTime":90,"taskGroups":[{"category":"soak|chop|boil|grind|cook_base|marinate|portion|other","label":"Group Label","tasks":[{"id":"s1","description":"task description mentioning quantities and which meals","estimatedMinutes":5,"forMeals":["Meal1","Meal2"],"storageNote":"Store in airtight container in fridge"}]}]}],"dailyCookCards":[{"day":1,"dayLabel":"Monday","slots":[{"mealType":"lunch","mealName":"Dal Makhani","mealId":"id","estimatedCookMinutes":18,"quickSteps":["Heat prepped onion-tomato base","Add soaked dal, pressure cook 3 whistles","Temper with ghee, serve with rice"],"preppedItems":["Dal soaked overnight","Onion-tomato base ready","Spice mix portioned"]}]}]}
+{
+  "weekendPrep": [
+    {"day":"saturday","estimatedTime":60,"taskGroups":[
+      {"category":"cook_base|chop|dough|grind|other","label":"Clear label","tasks":[
+        {"id":"s1","description":"Specific task with HOW-TO instructions and quantities","estimatedMinutes":15,"forMeals":["Meal1","Meal2"],"storageNote":"Specific storage e.g. 'Fridge in airtight container, 4 days'"}
+      ]}
+    ]}
+  ],
+  "weekdayEveningPrep": [
+    {"day":"wednesday","description":"Soak 1 cup rajma in 3 cups water for Thursday's Rajma Masala","estimatedMinutes":2}
+  ],
+  "dailyCookCards": [
+    {"day":1,"dayLabel":"Monday","slots":[
+      {"mealType":"lunch","mealName":"Dal Makhani","mealId":"id","estimatedCookMinutes":18,"quickSteps":["Heat prepped onion-tomato base","Add soaked dal, pressure cook 3 whistles","Temper with ghee"],"preppedItems":["Dal soaked overnight Sun","Onion-tomato base (from Sat)"]}
+    ]}
+  ]
+}
+
+Omit empty arrays. If no weekdayEveningPrep needed, omit the field. If Sunday has no tasks, only include Saturday in weekendPrep.
 Return ONLY valid JSON. No markdown.`;
 
   try {

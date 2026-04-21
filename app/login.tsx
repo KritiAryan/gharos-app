@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   View, Text, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator,
@@ -8,34 +8,86 @@ import { supabase } from "../lib/supabase";
 import { C, F, R } from "../lib/theme";
 
 export default function LoginScreen() {
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const router = useRouter();
+  const params = useLocalSearchParams<{ mode?: string; justSignedUp?: string }>();
+
+  // Default landing = signup (more common first-time flow). Toggle reroutes here.
+  const initialMode = params.mode === "login" ? "login" : "signup";
+  const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-  const router = useRouter();
+  const [message, setMessage] = useState(
+    params.justSignedUp === "1"
+      ? "Account created successfully. Sign in to continue."
+      : ""
+  );
 
   const handleSubmit = async () => {
     setError(""); setMessage(""); setLoading(true);
-    if (mode === "signup") {
-      const { error } = await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } });
-      if (error) setError(error.message);
-      else setMessage("Check your email for a confirmation link!");
-    } else {
-      const { error, data } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) { setError(error.message); }
-      else {
-        const { data: profile } = await supabase.from("profiles").select("config").eq("id", data.user!.id).maybeSingle();
+    try {
+      if (mode === "signup") {
+        const { error, data } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: name } },
+        });
+        if (error) { setError(error.message); setLoading(false); return; }
+
+        // If Supabase "Confirm email" is OFF, signUp returns an active session
+        // → user is already logged in, take them straight to onboarding.
+        if (data.session) {
+          router.replace("/onboarding");
+          setLoading(false);
+          return;
+        }
+
+        // Otherwise bounce to sign-in with a success banner.
+        setMode("login");
+        setPassword("");
+        setName("");
+        setMessage("Account created successfully. Sign in to continue.");
+      } else {
+        const { error, data } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) { setError(error.message); setLoading(false); return; }
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("config")
+          .eq("id", data.user!.id)
+          .maybeSingle();
         if (!profile || !profile.config) router.replace("/onboarding");
         else router.replace("/(tabs)");
       }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  const toggleMode = () => { setMode(mode === "login" ? "signup" : "login"); setError(""); setMessage(""); };
+  const handleGoogle = async () => {
+    setError(""); setMessage(""); setGoogleLoading(true);
+    try {
+      const redirectTo =
+        Platform.OS === "web" && typeof window !== "undefined"
+          ? `${window.location.origin}/`
+          : "gharosapp://";
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo },
+      });
+      if (error) setError(error.message);
+    } catch (e: any) {
+      setError(e?.message || "Google sign-in failed");
+    }
+    setGoogleLoading(false);
+  };
+
+  const toggleMode = () => {
+    setMode(mode === "login" ? "signup" : "login");
+    setError(""); setMessage("");
+  };
   const canSubmit = !loading && !!email && !!password && (mode === "login" || !!name);
 
   const inputStyle = {
@@ -105,6 +157,37 @@ export default function LoginScreen() {
                     {mode === "login" ? "Sign in →" : "Create account →"}
                   </Text>
               }
+            </TouchableOpacity>
+
+            {/* Divider */}
+            <View style={{ flexDirection: "row", alignItems: "center", marginVertical: 18 }}>
+              <View style={{ flex: 1, height: 1, backgroundColor: C.border }} />
+              <Text style={{ fontFamily: F.body, fontSize: 11, color: C.inkFaint, marginHorizontal: 10 }}>OR</Text>
+              <View style={{ flex: 1, height: 1, backgroundColor: C.border }} />
+            </View>
+
+            {/* Google OAuth */}
+            <TouchableOpacity
+              onPress={handleGoogle}
+              disabled={googleLoading}
+              style={{
+                paddingVertical: 13, borderRadius: R.button, alignItems: "center",
+                borderWidth: 1, borderColor: C.border, backgroundColor: "#ffffff",
+                flexDirection: "row", justifyContent: "center", gap: 10,
+                opacity: googleLoading ? 0.6 : 1,
+              }}
+              activeOpacity={0.8}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color={C.primary} />
+              ) : (
+                <>
+                  <Text style={{ fontSize: 16 }}>🇬</Text>
+                  <Text style={{ fontFamily: F.bodyMedium, fontSize: 14, color: C.ink }}>
+                    Continue with Google
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
 
             <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 20 }}>

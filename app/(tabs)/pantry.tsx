@@ -151,6 +151,7 @@ const DEFAULT_PANTRY: Record<string, { id: string; display_name: string; emoji: 
     { id: "cauliflower",  display_name: "Cauliflower",   emoji: "🥦" },
     { id: "peas",         display_name: "Peas",          emoji: "🫛" },
     { id: "beans",        display_name: "Beans",         emoji: "🫛" },
+    { id: "lemon",        display_name: "Lemon",         emoji: "🍋" },
   ],
   "Dairy": [
     { id: "milk",   display_name: "Milk",        emoji: "🥛" },
@@ -177,13 +178,12 @@ const DEFAULT_PANTRY: Record<string, { id: string; display_name: string; emoji: 
     { id: "bay_leaf",      display_name: "Bay Leaf",            emoji: "🍃" },
     { id: "chaat_masala",  display_name: "Chaat Masala",        emoji: "🫙" },
     { id: "kitchen_king",  display_name: "Kitchen King",        emoji: "🫙" },
+    { id: "sugar",         display_name: "Sugar",               emoji: "🍬" },
+    { id: "jaggery",       display_name: "Jaggery",             emoji: "🟫" },
+    { id: "tamarind",      display_name: "Tamarind",            emoji: "🟤" },
   ],
   "Oils & Condiments": [
     { id: "oil",       display_name: "Cooking Oil", emoji: "🫙" },
-    { id: "lemon",     display_name: "Lemon",       emoji: "🍋" },
-    { id: "sugar",     display_name: "Sugar",       emoji: "🍬" },
-    { id: "jaggery",   display_name: "Jaggery",     emoji: "🟫" },
-    { id: "tamarind",  display_name: "Tamarind",    emoji: "🟤" },
     { id: "vinegar",   display_name: "Vinegar",     emoji: "🫙" },
     { id: "soy_sauce", display_name: "Soy Sauce",   emoji: "🫙" },
   ],
@@ -255,11 +255,15 @@ function ItemTile({ item, selected, onToggle }: { item: PantryItem; selected: bo
     <TouchableOpacity
       onPress={() => onToggle(item.id)}
       activeOpacity={0.7}
+      // Fixed height so single-line & two-line labels produce the same tile size.
+      // Avoids the stagger you saw on "Curry Leaves" / "Red Chilli Powder".
       style={{
         width: "100%",
+        height: 120,
         alignItems: "center",
-        justifyContent: "center",
-        paddingVertical: 12,
+        justifyContent: "flex-start",
+        paddingTop: 12,
+        paddingBottom: 8,
         paddingHorizontal: 4,
         borderRadius: 16,
         borderWidth: 2,
@@ -307,18 +311,20 @@ function ItemTile({ item, selected, onToggle }: { item: PantryItem; selected: bo
         )}
       </View>
 
-      {/* Name — 12px like web text-xs */}
-      <Text
-        style={{
-          fontSize: 12, lineHeight: 15, textAlign: "center",
-          fontWeight: "500",
-          color: selected ? "#15803d" : "#4b5563",
-          paddingHorizontal: 2,
-        }}
-        numberOfLines={2}
-      >
-        {item.display_name}
-      </Text>
+      {/* Name — fixed text block so 1-line and 2-line labels align */}
+      <View style={{ height: 32, justifyContent: "flex-start", width: "100%" }}>
+        <Text
+          style={{
+            fontSize: 12, lineHeight: 15, textAlign: "center",
+            fontWeight: "500",
+            color: selected ? "#15803d" : "#4b5563",
+            paddingHorizontal: 2,
+          }}
+          numberOfLines={2}
+        >
+          {item.display_name}
+        </Text>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -646,33 +652,45 @@ export default function PantryScreen() {
           )}
 
           {/* Add custom item */}
-          <View className="mt-4 border-t border-gray-100 pt-4 mx-1">
+          <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: "#f3f4f6", paddingTop: 16 }}>
             <Text className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1">
               Add Custom Item
             </Text>
             <Text className="text-xs text-gray-400 mb-2.5">
               Any language — we'll find the right category
             </Text>
-            <View className="flex-row gap-2">
+            {/* Row: input shrinks, button has a fixed width so it never overflows */}
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, width: "100%" }}>
               <TextInput
                 placeholder="e.g. Kokum, pyaaz…"
                 value={customInput}
                 onChangeText={setCustomInput}
                 onSubmitEditing={addCustom}
                 editable={!addingCustom}
-                className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-white text-gray-700"
-                style={{ opacity: addingCustom ? 0.6 : 1 }}
+                style={{
+                  flex: 1, minWidth: 0,
+                  borderWidth: 1, borderColor: "#e5e7eb",
+                  borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10,
+                  fontSize: 14, backgroundColor: "#fff", color: "#374151",
+                  opacity: addingCustom ? 0.6 : 1,
+                }}
               />
               <TouchableOpacity
                 onPress={addCustom}
                 disabled={!customInput.trim() || addingCustom}
-                className="bg-green-500 rounded-xl px-3 py-2.5 items-center justify-center"
-                style={{ opacity: !customInput.trim() || addingCustom ? 0.5 : 1 }}
+                style={{
+                  width: 56, height: 42,
+                  backgroundColor: "#22c55e",
+                  borderRadius: 12,
+                  alignItems: "center", justifyContent: "center",
+                  flexShrink: 0,
+                  opacity: !customInput.trim() || addingCustom ? 0.5 : 1,
+                }}
                 activeOpacity={0.8}
               >
                 {addingCustom
                   ? <ActivityIndicator color="white" size="small" />
-                  : <Text className="text-white text-sm font-semibold">+ Add</Text>
+                  : <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>+</Text>
                 }
               </TouchableOpacity>
             </View>
