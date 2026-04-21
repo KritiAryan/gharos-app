@@ -6,6 +6,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { supabase } from "../lib/supabase";
+import RecipePopup from "../components/RecipePopup";
+import type { Meal } from "../components/RecipePopup";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Slot = { mealType: string; mealId: string; mealName: string; leftoverNote?: string | null };
@@ -112,9 +114,20 @@ function PlanDetail({ plan: initialPlan, onBack }: { plan: Plan; onBack: () => v
   const [editSlots, setEditSlots] = useState<Slot[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<{ slotIdx: number; mealType: string; currentId: string } | null>(null);
+  const [popupMeal, setPopupMeal] = useState<Meal | null>(null);
+  const [profile, setProfile] = useState<any>(null);
 
   const weeklyPlan = plan.weekly_plan || [];
   const allMeals   = plan.selected_meals || [];
+
+  useEffect(() => {
+    // Grab profile once so RecipePopup has recipe-site preferences.
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) return;
+      const { data } = await supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
+      if (data) setProfile(data);
+    });
+  }, []);
 
   const startEdit = (dayPlan: DayPlan) => {
     setEditingDay(dayPlan.day);
@@ -234,8 +247,8 @@ function PlanDetail({ plan: initialPlan, onBack }: { plan: Plan; onBack: () => v
                 <View>
                   {(slots || []).map((slot, i) => {
                     const meal = allMeals.find((m: any) => m.id === slot.mealId);
-                    return (
-                      <View key={i} className="flex-row items-center gap-3 px-4 py-3 border-t border-gray-50">
+                    const rowContent = (
+                      <>
                         <Text style={{ fontSize:20 }}>{MEAL_EMOJIS[slot.mealType]||"🍽️"}</Text>
                         <View className="flex-1 min-w-0">
                           <Text className="text-xs text-gray-400 capitalize">{slot.mealType}</Text>
@@ -262,7 +275,26 @@ function PlanDetail({ plan: initialPlan, onBack }: { plan: Plan; onBack: () => v
                         ) : (
                           <Text style={{ fontSize:18 }}>{CUISINE_EMOJIS[meal?.cuisine]||""}</Text>
                         )}
-                      </View>
+                      </>
+                    );
+
+                    // Non-edit mode → row opens recipe popup. Edit mode → rows are plain.
+                    if (isEditing || !meal) {
+                      return (
+                        <View key={i} className="flex-row items-center gap-3 px-4 py-3 border-t border-gray-50">
+                          {rowContent}
+                        </View>
+                      );
+                    }
+                    return (
+                      <TouchableOpacity
+                        key={i}
+                        onPress={() => setPopupMeal(meal as Meal)}
+                        activeOpacity={0.7}
+                        className="flex-row items-center gap-3 px-4 py-3 border-t border-gray-50"
+                      >
+                        {rowContent}
+                      </TouchableOpacity>
                     );
                   })}
 
@@ -295,6 +327,12 @@ function PlanDetail({ plan: initialPlan, onBack }: { plan: Plan; onBack: () => v
           onClose={() => setPicker(null)}
         />
       )}
+
+      <RecipePopup
+        meal={popupMeal}
+        profile={profile}
+        onClose={() => setPopupMeal(null)}
+      />
     </SafeAreaView>
   );
 }
