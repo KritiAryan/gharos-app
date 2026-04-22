@@ -122,10 +122,22 @@ export async function extractRecipe(url: string): Promise<ExtractionResult> {
     //    fall back to whatever the LLM may have pulled from markdown.
     const finalVideoUrl = media.videoUrl ?? extracted.video_url ?? null;
 
+    // 6. Deterministic timing fallback — regex against the FULL (un-trimmed) markdown.
+    //    The recipe-card metadata often lives near the bottom of the page, past the
+    //    9k-char truncation, so the LLM can't always see it.
+    const regexTimings = extractTimings(jinaResult.rawMarkdown);
+    const prep_time_minutes  = extracted.prep_time_minutes  ?? regexTimings.prep_time_minutes;
+    const cook_time_minutes  = extracted.cook_time_minutes  ?? regexTimings.cook_time_minutes;
+    const total_time_minutes = extracted.total_time_minutes ?? regexTimings.total_time_minutes
+      ?? ((prep_time_minutes && cook_time_minutes) ? prep_time_minutes + cook_time_minutes : null);
+
     return {
       ok: true,
       data: {
         ...extracted,
+        prep_time_minutes,
+        cook_time_minutes,
+        total_time_minutes,
         source_image_url: media.ogImage,
         source_url: url,
         video_url: finalVideoUrl,
@@ -216,7 +228,7 @@ function normaliseYouTubeUrl(raw: string): string {
 
 // ─── Step 2: Jina reader ──────────────────────────────────────────────────────
 
-type JinaResult = { ok: true; markdown: string } | { ok: false; error: string };
+type JinaResult = { ok: true; markdown: string; rawMarkdown: string } | { ok: false; error: string };
 
 async function fetchJinaMarkdown(url: string): Promise<JinaResult> {
   const jinaUrl = `https://r.jina.ai/${url}`;
@@ -244,12 +256,64 @@ async function fetchJinaMarkdown(url: string): Promise<JinaResult> {
     // Slim the markdown — recipe sites are ~60% boilerplate (ads, related posts, social links).
     // Removing noise gets us more useful recipe content under the same token budget.
     const cleaned = cleanMarkdown(raw);
-    // Cap at 9000 chars (~2250 tokens) to keep total request under Groq's 12k TPM free tier
-    return { ok: true, markdown: cleaned.slice(0, 9000) };
+    // Cap the LLM-bound copy at 9000 chars (~2250 tokens) to stay under Groq's 12k TPM.
+    // Keep the full rawMarkdown around for deterministic regex fallbacks (timings, video_url).
+    return { ok: true, markdown: cleaned.slice(0, 9000), rawMarkdown: raw };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: `Network error — ${msg}` };
   }
+}
+
+/**
+ * Deterministic timing extraction from the markdown.
+ * Covers common recipe-card formats used by Indian food blogs:
+ *   "Prep Time: 15 minutes" / "Prep Time — 15 mins" / "Preparation 15 min"
+ *   "Cook Time 20 mins" / "Cooking Time: 20 minutes"
+ *   "Total Time 35 mins" / "Ready in 1 hour 15 minutes"
+ * Used as a fallback when the LLM misses these fields.
+ */
+function extractTimings(md: string): {
+  prep_time_minutes: number | null;
+  cook_time_minutes: number | null;
+  total_time_minutes: number | null;
+} {
+  const parseDuration = (raw: string): number | null => {
+    const s = raw.toLowerCase();
+    // "1 hour 15 minutes" / "1h 15m" / "1:15"
+    const hm = s.match(/(\d+)\s*(?:h|hr|hour|hours)\s*(\d+)\s*(?:m|min|minute|minutes)?/);
+    if (hm) return parseInt(hm[1]) * 60 + parseInt(hm[2]);
+    const colon = s.match(/(\d+):(\d{2})\b/);
+    if (colon) return parseInt(colon[1]) * 60 + parseInt(colon[2]);
+    const hOnly = s.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hour|hours)\b/);
+    if (hOnly) return Math.round(parseFloat(hOnly[1]) * 60);
+    const mOnly = s.match(/(\d+)\s*(?:m|min|mins|minute|minutes)\b/);
+    if (mOnly) return parseInt(mOnly[1]);
+    // Bare number assumed to be minutes
+    const bare = s.match(/\b(\d+)\b/);
+    if (bare) return parseInt(bare[1]);
+    return null;
+  };
+
+  const findField = (...labels: string[]): number | null => {
+    for (const label of labels) {
+      const re = new RegExp(`${label}\\s*[:\\-–—]?\\s*([^\\n|·•]{1,40})`, "i");
+      const m = md.match(re);
+      if (m) {
+        const parsed = parseDuration(m[1]);
+        if (parsed && parsed > 0 && parsed < 24 * 60) return parsed;
+      }
+    }
+    return null;
+  };
+
+  const prep  = findField("prep\\s*time", "preparation\\s*time", "preparation");
+  const cook  = findField("cook\\s*time", "cooking\\s*time", "cook");
+  let total   = findField("total\\s*time", "ready\\s*in", "total");
+
+  if (!total && prep && cook) total = prep + cook;
+
+  return { prep_time_minutes: prep, cook_time_minutes: cook, total_time_minutes: total };
 }
 
 /** Strip recipe-site boilerplate so the token budget gets spent on actual recipe content. */
@@ -355,6 +419,17 @@ FIDELITY RULES (detail)
 COMPLETENESS RULES (detail — do this carefully)
 ══════════════════════════════════════════════════════════════════════════════
 
+TIMING (prep_time_minutes / cook_time_minutes / total_time_minutes):
+  MANDATORY when the page shows them. Most recipe sites have a metadata block
+  near the top OR in the recipe card at the bottom with labels like:
+    • "Prep Time: 15 minutes" / "Prep Time — 15 mins" / "Preparation 15 min"
+    • "Cook Time: 20 minutes" / "Cooking Time 20 mins"
+    • "Total Time: 35 minutes" / "Ready in 35 mins"
+  Convert HH:MM or "1 hour 15 minutes" into integer minutes (e.g. 75).
+  If the page has only "Total Time" → populate total_time_minutes, leave prep/cook null.
+  If the page has prep + cook but no total → compute total_time_minutes = prep + cook.
+  If the page has NO timing info at all → all three null.
+
 STEPS:
   A full recipe typically has MULTIPLE phases. For a dish like palak paneer, a
   complete steps array should include SEPARATE groups such as:
@@ -444,6 +519,8 @@ SELF-CHECK BEFORE RETURNING
 ══════════════════════════════════════════════════════════════════════════════
 
 Before producing your JSON, silently verify:
+  ☐ Did I capture prep_time_minutes, cook_time_minutes, total_time_minutes
+     if the page shows them anywhere (top metadata OR bottom recipe card)?
   ☐ Did I count the tip items on the page and match that count in tips[]?
   ☐ Did I count the FAQ pairs and match that count in faqs[]?
   ☐ Did I count the notes items and match that count in notes[]?
