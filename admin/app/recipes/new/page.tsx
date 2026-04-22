@@ -1,7 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { extractRecipe, type ExtractedRecipe } from "./actions";
 
 const DISH_ROLES   = ["hero", "side", "staple", "condiment", "snack"];
 const DISH_TYPES   = ["gravy", "dry_sabzi", "dal", "rice", "roti", "chutney", "raita", "biryani", "salad", "bread", "sweet", "snack"];
@@ -37,7 +38,10 @@ const EMPTY_RECIPE = {
   prep_components: "[]",
   nutrition: "",
   verified: false,
+  source_image_url: null as string | null,
 };
+
+type FormState = typeof EMPTY_RECIPE;
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -65,12 +69,51 @@ function FieldLabel({ children, hint }: { children: React.ReactNode; hint?: stri
 const inputCls = "w-full border border-brand-border rounded-button px-3 py-2 text-sm bg-brand-bg focus:outline-none focus:ring-2 focus:ring-brand-primary/50 text-brand-text";
 const textareaCls = `${inputCls} font-mono text-xs resize-y`;
 
+/** Convert ExtractedRecipe into form state */
+function extractedToForm(e: ExtractedRecipe, url: string): FormState {
+  return {
+    canonical_name:      e.canonical_name ?? "",
+    display_name:        e.display_name ?? "",
+    description:         e.description ?? "",
+    cuisine:             e.cuisine ?? "",
+    region:              e.region ?? "",
+    dish_role:           e.dish_role ?? "hero",
+    dish_type:           e.dish_type ?? "",
+    meal_types:          Array.isArray(e.meal_types) ? e.meal_types : [],
+    diet_tags:           Array.isArray(e.diet_tags) ? e.diet_tags : [],
+    prep_time_minutes:   e.prep_time_minutes ?? "",
+    cook_time_minutes:   e.cook_time_minutes ?? "",
+    total_time_minutes:  e.total_time_minutes ?? "",
+    base_servings:       e.base_servings ?? 2,
+    source_url:          url,
+    source_name:         e.source_name ?? "",
+    source_author:       e.source_author ?? "",
+    pairs_well_with:     (e.pairs_well_with ?? []).join(", "),
+    key_ingredients:     (e.key_ingredients ?? []).join(", "),
+    ingredients:         JSON.stringify(e.ingredients ?? [], null, 2),
+    steps:               JSON.stringify(e.steps ?? [], null, 2),
+    prep_components:     JSON.stringify(e.prep_components ?? [], null, 2),
+    tips:                JSON.stringify(e.tips ?? [], null, 2),
+    faqs:                JSON.stringify(e.faqs ?? [], null, 2),
+    notes:               JSON.stringify(e.notes ?? [], null, 2),
+    nutrition:           e.nutrition ? JSON.stringify(e.nutrition, null, 2) : "",
+    verified:            false,
+    source_image_url:        e.source_image_url ?? null,
+  };
+}
+
 export default function NewRecipePage() {
-  const router  = useRouter();
+  const router   = useRouter();
   const supabase = createClient();
-  const [form, setForm]     = useState({ ...EMPTY_RECIPE });
-  const [saving, setSaving] = useState(false);
-  const [error, setError]   = useState("");
+
+  const [extractUrl, setExtractUrl]   = useState("");
+  const [extracting, startExtract]    = useTransition();
+  const [extractError, setExtractError] = useState("");
+  const [extracted, setExtracted]     = useState(false);
+
+  const [form, setForm]       = useState<FormState>({ ...EMPTY_RECIPE });
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState("");
   const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({});
 
   function setField(key: string, value: unknown) {
@@ -87,6 +130,7 @@ export default function NewRecipePage() {
   }
 
   function validateJson(key: string, value: string): boolean {
+    if (!value.trim()) { setJsonErrors(e => ({ ...e, [key]: "" })); return true; }
     try {
       JSON.parse(value);
       setJsonErrors(e => ({ ...e, [key]: "" }));
@@ -97,22 +141,40 @@ export default function NewRecipePage() {
     }
   }
 
+  // ── B1 Extraction ──────────────────────────────────────────────────────────
+  function handleExtract() {
+    if (!extractUrl.trim()) return;
+    setExtractError("");
+    startExtract(async () => {
+      const result = await extractRecipe(extractUrl.trim());
+      if (result.ok) {
+        setForm(extractedToForm(result.data, extractUrl.trim()));
+        setExtracted(true);
+        setExtractError("");
+      } else {
+        setExtractError(result.error);
+      }
+    });
+  }
+
+  // ── Save ───────────────────────────────────────────────────────────────────
   async function handleSave(verified: boolean) {
     setError("");
 
-    // Validate required fields
     if (!form.canonical_name || !form.display_name || !form.dish_role) {
       setError("Canonical name, display name, and dish role are required.");
       return;
     }
 
-    // Validate JSON fields
     const jsonFields = ["ingredients", "steps", "tips", "faqs", "notes", "prep_components"];
     const allValid = jsonFields.every(f => validateJson(f, form[f as keyof typeof form] as string));
     if (!allValid) { setError("Fix JSON errors before saving."); return; }
 
     setSaving(true);
     try {
+      const parseOptional = (v: string) => { try { return v.trim() ? JSON.parse(v) : null; } catch { return null; } };
+      const parseArr      = (v: string) => { try { return v.trim() ? JSON.parse(v) : []; } catch { return []; } };
+
       const payload = {
         canonical_name:      form.canonical_name.trim().toLowerCase().replace(/\s+/g, "_"),
         display_name:        form.display_name.trim(),
@@ -132,15 +194,16 @@ export default function NewRecipePage() {
         source_author:       form.source_author || null,
         pairs_well_with:     form.pairs_well_with ? form.pairs_well_with.split(",").map(s => s.trim()).filter(Boolean) : [],
         key_ingredients:     form.key_ingredients ? form.key_ingredients.split(",").map(s => s.trim()).filter(Boolean) : [],
-        ingredients:         JSON.parse(form.ingredients),
-        steps:               JSON.parse(form.steps),
-        tips:                JSON.parse(form.tips),
-        faqs:                JSON.parse(form.faqs),
-        notes:               JSON.parse(form.notes),
-        prep_components:     JSON.parse(form.prep_components),
-        nutrition:           form.nutrition ? JSON.parse(form.nutrition) : null,
+        ingredients:         parseArr(form.ingredients),
+        steps:               parseArr(form.steps),
+        tips:                parseArr(form.tips),
+        faqs:                parseArr(form.faqs),
+        notes:               parseArr(form.notes),
+        prep_components:     parseArr(form.prep_components),
+        nutrition:           parseOptional(form.nutrition),
+        source_image_url:        form.source_image_url || null,
         verified,
-        extraction_confidence: "high",
+        extraction_confidence: extracted ? "high" : "manual",
         extracted_at:        new Date().toISOString(),
       };
 
@@ -159,7 +222,7 @@ export default function NewRecipePage() {
         <div>
           <h1 className="font-serif text-2xl font-bold text-brand-text">Import Recipe</h1>
           <p className="text-brand-muted text-sm mt-0.5">
-            Manually enter recipe details. B1 auto-extraction coming soon.
+            Paste a URL to auto-extract, or fill in the form manually.
           </p>
         </div>
         <div className="flex gap-2">
@@ -180,22 +243,73 @@ export default function NewRecipePage() {
         </div>
       </div>
 
-      {/* URL extraction placeholder */}
-      <div className="bg-brand-accent/20 border border-brand-accent rounded-card p-4 mb-6 flex items-start gap-3">
-        <span className="text-2xl">🔬</span>
-        <div>
-          <p className="text-sm font-semibold text-brand-text">B1 Auto-Extraction — Coming Soon</p>
-          <p className="text-xs text-brand-muted mt-0.5">
-            Paste a recipe URL and Agent B1 will extract all fields automatically.
-            For now, fill in the form manually.
-          </p>
-          <input
-            type="url"
-            placeholder="https://www.indianhealthyrecipes.com/palak-paneer…"
-            className={`${inputCls} mt-2`}
-            disabled
-          />
+      {/* ── B1 Extractor ──────────────────────────────────────────────────── */}
+      <div className={`border rounded-card p-4 mb-6 transition-colors ${
+        extracted
+          ? "bg-green-50 border-green-200"
+          : "bg-brand-accent/20 border-brand-accent"
+      }`}>
+        <div className="flex items-start gap-3">
+          <span className="text-2xl">{extracted ? "✅" : "🔬"}</span>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-brand-text">
+              {extracted ? "B1 Extraction Complete — Review &amp; Edit Below" : "B1 Auto-Extraction"}
+            </p>
+            <p className="text-xs text-brand-muted mt-0.5 mb-3">
+              {extracted
+                ? "All fields have been pre-filled. Verify the JSON fields, then save."
+                : "Paste a recipe URL and Agent B1 will extract all fields via Jina + Groq."}
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={extractUrl}
+                onChange={e => setExtractUrl(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleExtract()}
+                placeholder="https://www.indianhealthyrecipes.com/palak-paneer…"
+                disabled={extracting}
+                className={`${inputCls} flex-1`}
+              />
+              <button
+                onClick={handleExtract}
+                disabled={extracting || !extractUrl.trim()}
+                className="bg-brand-primary text-white text-sm px-4 py-2 rounded-button hover:opacity-90 disabled:opacity-50 transition-opacity whitespace-nowrap"
+              >
+                {extracting ? "Extracting…" : extracted ? "Re-extract" : "Extract →"}
+              </button>
+            </div>
+            {extracting && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-brand-muted">
+                <span className="inline-block w-3 h-3 border-2 border-brand-primary border-t-transparent rounded-full animate-spin" />
+                Fetching via Jina reader + Groq LLM — takes 10–30 seconds…
+              </div>
+            )}
+            {extractError && (
+              <p className="mt-2 text-xs text-red-600 font-medium">⚠ {extractError}</p>
+            )}
+          </div>
         </div>
+
+        {/* og:image preview */}
+        {extracted && form.source_image_url && (
+          <div className="mt-3 flex items-center gap-3 pt-3 border-t border-green-200">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={form.source_image_url}
+              alt="Recipe preview"
+              className="w-20 h-16 object-cover rounded-button border border-green-200"
+              onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+            <div>
+              <p className="text-xs font-medium text-brand-text">Source image detected</p>
+              <p className="text-xs text-brand-muted break-all">{form.source_image_url}</p>
+              <p className="text-xs text-brand-muted mt-0.5">
+                This will be stored as <code className="text-brand-primary">source_image_url</code>.
+                AI-generated image will replace it in Phase 5.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {error && (
@@ -204,6 +318,7 @@ export default function NewRecipePage() {
         </div>
       )}
 
+      {/* ── Form fields ────────────────────────────────────────────────────── */}
       <div className="space-y-6">
         {/* Identity */}
         <Section title="Identity">
@@ -257,7 +372,7 @@ export default function NewRecipePage() {
         </Section>
 
         {/* Timing & Serving */}
-        <Section title="Timing & Serving">
+        <Section title="Timing &amp; Serving">
           <div className="grid grid-cols-4 gap-4">
             {[["prep_time_minutes","Prep Time (min)"],["cook_time_minutes","Cook Time (min)"],["total_time_minutes","Total Time (min)"],["base_servings","Base Servings"]].map(([key, label]) => (
               <div key={key}>
@@ -291,7 +406,7 @@ export default function NewRecipePage() {
         </Section>
 
         {/* Pairing & Keys */}
-        <Section title="Pairing & Key Ingredients">
+        <Section title="Pairing &amp; Key Ingredients">
           <div className="grid grid-cols-2 gap-4">
             <div>
               <FieldLabel hint="comma-separated canonical_names">Pairs Well With</FieldLabel>
@@ -321,7 +436,7 @@ export default function NewRecipePage() {
           <Section key={key} title={label}>
             <textarea
               className={`${textareaCls} ${jsonErrors[key] ? "border-red-400 ring-1 ring-red-400" : ""}`}
-              rows={5}
+              rows={key === "ingredients" || key === "steps" || key === "prep_components" ? 8 : 4}
               value={form[key as keyof typeof form] as string}
               placeholder={placeholder}
               onChange={e => { setField(key, e.target.value); validateJson(key, e.target.value); }}
@@ -333,6 +448,11 @@ export default function NewRecipePage() {
         {/* Verified toggle */}
         <Section title="Quality">
           <Toggle label="Mark as verified" checked={form.verified} onChange={v => setField("verified", v)} />
+          {extracted && (
+            <p className="text-xs text-brand-muted mt-2">
+              Extracted by B1 · Review all fields before verifying
+            </p>
+          )}
         </Section>
       </div>
 
@@ -352,7 +472,7 @@ export default function NewRecipePage() {
   );
 }
 
-// ── Helpers ──────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
