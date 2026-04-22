@@ -838,3 +838,38 @@ REMINDERS:
     video_url:         parsed.video_url ?? null,
   };
 }
+
+// ─── Save action ──────────────────────────────────────────────────────────────
+
+/**
+ * Writes recipes via the service-role admin client, bypassing RLS.
+ * Browser-side saves via anon key fail because the recipes RLS policy is
+ * "TO service_role" for writes. Server action is the correct pattern.
+ */
+export type SaveResult =
+  | { ok: true; id: string }
+  | { ok: false; error: string };
+
+export async function saveRecipe(payload: Record<string, unknown>): Promise<SaveResult> {
+  try {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("recipes")
+      .insert(payload)
+      .select("id")
+      .single();
+
+    if (error) {
+      const msg = error.message || "Unknown DB error";
+      const code = error.code ? ` (code ${error.code})` : "";
+      const hint = error.hint ? ` · hint: ${error.hint}` : "";
+      const details = error.details ? ` · ${error.details}` : "";
+      return { ok: false, error: `${msg}${code}${hint}${details}` };
+    }
+    return { ok: true, id: data.id };
+  } catch (e) {
+    console.error("[saveRecipe]", e);
+    const msg = e instanceof Error ? e.message : "Save failed.";
+    return { ok: false, error: msg };
+  }
+}

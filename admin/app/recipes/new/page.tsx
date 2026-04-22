@@ -1,8 +1,7 @@
 "use client";
 import { useState, useTransition } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { extractRecipe, type ExtractedRecipe } from "./actions";
+import { extractRecipe, saveRecipe, type ExtractedRecipe } from "./actions";
 
 const DISH_ROLES   = ["hero", "side", "staple", "condiment", "snack"];
 const DISH_TYPES   = ["gravy", "dry_sabzi", "dal", "rice", "roti", "chutney", "raita", "biryani", "salad", "bread", "sweet", "snack"];
@@ -105,8 +104,7 @@ function extractedToForm(e: ExtractedRecipe, url: string): FormState {
 }
 
 export default function NewRecipePage() {
-  const router   = useRouter();
-  const supabase = createClient();
+  const router = useRouter();
 
   const [extractUrl, setExtractUrl]   = useState("");
   const [extracting, startExtract]    = useTransition();
@@ -210,11 +208,17 @@ export default function NewRecipePage() {
         extracted_at:        new Date().toISOString(),
       };
 
-      const { data, error: err } = await supabase.from("recipes").insert(payload).select("id").single();
-      if (err) throw err;
-      router.push(`/recipes/${data.id}`);
+      const result = await saveRecipe(payload);
+      if (!result.ok) {
+        setError(`Save failed — ${result.error}`);
+        setSaving(false);
+        return;
+      }
+      router.push(`/recipes/${result.id}`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Save failed.");
+      const msg = e instanceof Error ? e.message : "Save failed (unexpected error).";
+      setError(msg);
+      console.error("[Save recipe] full error:", e);
       setSaving(false);
     }
   }

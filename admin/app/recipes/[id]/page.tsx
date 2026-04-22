@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useParams, useRouter } from "next/navigation";
+import { updateRecipe, deleteRecipe } from "./actions";
 
 const inputCls     = "w-full border border-brand-border rounded-button px-3 py-2 text-sm bg-brand-bg focus:outline-none focus:ring-2 focus:ring-brand-primary/50 text-brand-text";
 const textareaCls  = `${inputCls} font-mono text-xs resize-y`;
@@ -144,15 +145,25 @@ export default function RecipeDetailPage() {
     delete payload.created_at;
     delete payload.updated_at;
 
-    const { error: err } = await supabase.from("recipes").update(payload).eq("id", id);
-    if (err) { setError(err.message); } else { setSaved(true); }
+    const result = await updateRecipe(id, payload);
+    if (!result.ok) {
+      setError(`Update failed — ${result.error}`);
+      console.error("[updateRecipe]", result.error);
+    } else {
+      setSaved(true);
+    }
     setSaving(false);
   }
 
   async function handleDelete() {
     if (!confirm(`Delete "${recipe?.display_name}"? This cannot be undone.`)) return;
     setDeleting(true);
-    await supabase.from("recipes").delete().eq("id", id);
+    const result = await deleteRecipe(id);
+    if (!result.ok) {
+      setError(`Delete failed — ${result.error}`);
+      setDeleting(false);
+      return;
+    }
     router.push("/recipes");
   }
 
