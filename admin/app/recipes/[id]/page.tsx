@@ -68,8 +68,12 @@ export default function RecipeDetailPage() {
   const router    = useRouter();
   const supabase  = createClient();
 
-  const [recipe, setRecipe]     = useState<Record<string, unknown> | null>(null);
-  const [form, setForm]         = useState<Record<string, unknown>>({});
+  // `any` here is deliberate: the recipe shape is a wide JSONB bag; every
+  // consumer site already casts the specific field it reads (`as string`,
+  // `as number`, etc). Typing as `unknown` forces the same casts but
+  // confuses TS's JSX ReactNode inference further down the tree.
+  const [recipe, setRecipe]     = useState<Record<string, any> | null>(null);
+  const [form, setForm]         = useState<Record<string, any>>({});
   const [saving, setSaving]     = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError]       = useState("");
