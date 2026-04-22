@@ -20,7 +20,7 @@ export default async function IngredientCatalogPage({
 
   // Category counts
   const { data: all } = await supabase.from("ingredient_catalog").select("category");
-  const catCounts = (all ?? []).reduce<Record<string, number>>((a, r) => {
+  const catCounts = ((all ?? []) as { category: string }[]).reduce((a: Record<string, number>, r) => {
     if (r.category) { a[r.category] = (a[r.category] ?? 0) + 1; }
     return a;
   }, {});

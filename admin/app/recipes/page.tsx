@@ -27,7 +27,7 @@ export default async function RecipesPage({
 
   // Count by role for filter pills
   const { data: allRoles } = await supabase.from("recipes").select("dish_role");
-  const roleCounts = (allRoles ?? []).reduce<Record<string, number>>((a, r) => {
+  const roleCounts = ((allRoles ?? []) as { dish_role: string }[]).reduce((a: Record<string, number>, r) => {
     a[r.dish_role] = (a[r.dish_role] ?? 0) + 1; return a;
   }, {});
 
