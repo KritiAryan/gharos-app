@@ -16,7 +16,8 @@ export default async function IngredientCatalogPage({
   if (params.category) query = query.eq("category", params.category);
   if (params.q)        query = query.ilike("canonical_id", `%${params.q}%`);
 
-  const { data: items = [] } = await query;
+  const { data: itemsRaw } = await query;
+  const items = itemsRaw ?? [];
 
   // Category counts
   const { data: all } = await supabase.from("ingredient_catalog").select("category");

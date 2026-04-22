@@ -23,7 +23,8 @@ export default async function RecipesPage({
   if (params.verified === "true")  query = query.eq("verified", true);
   if (params.verified === "false") query = query.eq("verified", false);
 
-  const { data: recipes = [] } = await query;
+  const { data: recipesRaw } = await query;
+  const recipes = recipesRaw ?? [];
 
   // Count by role for filter pills
   const { data: allRoles } = await supabase.from("recipes").select("dish_role");
