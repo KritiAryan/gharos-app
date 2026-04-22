@@ -187,7 +187,8 @@ export default function NewRecipePage() {
         diet_tags:           form.diet_tags,
         prep_time_minutes:   form.prep_time_minutes ? Number(form.prep_time_minutes) : null,
         cook_time_minutes:   form.cook_time_minutes ? Number(form.cook_time_minutes) : null,
-        total_time_minutes:  form.total_time_minutes ? Number(form.total_time_minutes) : null,
+        // total_time_minutes is a generated column in the DB (prep + cook).
+        // Writing to it throws 428C9; let Postgres compute it.
         base_servings:       Number(form.base_servings),
         source_url:          form.source_url || null,
         source_name:         form.source_name || null,

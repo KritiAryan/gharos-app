@@ -148,6 +148,8 @@ export default function RecipeDetailPage() {
     delete payload.id;
     delete payload.created_at;
     delete payload.updated_at;
+    // total_time_minutes is a generated column; writing it throws 428C9.
+    delete payload.total_time_minutes;
 
     const result = await updateRecipe(id, payload);
     if (!result.ok) {
