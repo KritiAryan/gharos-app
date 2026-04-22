@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Lora:wght@600;700&display=swap');
+
+* { box-sizing: border-box; }
+body { font-family: 'DM Sans', sans-serif; background: #FBF6EF; color: #2C1A0E; }
