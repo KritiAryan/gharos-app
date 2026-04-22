@@ -82,20 +82,20 @@ export async function extractRecipe(url: string): Promise<ExtractionResult> {
   }
 
   try {
-    // 1. Fetch og:image from source page
+    // 1. Fetch og:image from source page (non-blocking — failure is OK)
     const ogImage = await fetchOgImage(url);
 
     // 2. Fetch markdown content via Jina reader
-    const markdown = await fetchJinaMarkdown(url);
-    if (!markdown) {
-      return { ok: false, error: "Could not fetch recipe content. Check the URL and try again." };
+    const jinaResult = await fetchJinaMarkdown(url);
+    if (!jinaResult.ok) {
+      return { ok: false, error: `Jina fetch failed: ${jinaResult.error}` };
     }
 
-    // 3. Get ingredient catalog for context (top 100 canonical IDs)
+    // 3. Get ingredient catalog for context (top 200 canonical IDs)
     const catalog = await fetchCatalogContext();
 
     // 4. Call Groq to extract structured recipe
-    const extracted = await callGroqExtractor(url, markdown, catalog);
+    const extracted = await callGroqExtractor(url, jinaResult.markdown, catalog);
 
     return { ok: true, data: { ...extracted, source_image_url: ogImage, source_url: url } };
   } catch (e) {
@@ -126,24 +126,37 @@ async function fetchOgImage(url: string): Promise<string | null> {
 
 // ─── Step 2: Jina reader ──────────────────────────────────────────────────────
 
-async function fetchJinaMarkdown(url: string): Promise<string | null> {
+type JinaResult = { ok: true; markdown: string } | { ok: false; error: string };
+
+async function fetchJinaMarkdown(url: string): Promise<JinaResult> {
+  const jinaUrl = `https://r.jina.ai/${url}`;
+  const headers: Record<string, string> = {
+    "Accept": "text/markdown",
+    "X-Return-Format": "markdown",
+    "X-Remove-Selector": "header,footer,nav,.ads,.comments",
+  };
+  // Only send Authorization header if API key is actually set (empty Bearer is rejected)
+  const jinaKey = process.env.JINA_API_KEY;
+  if (jinaKey) headers.Authorization = `Bearer ${jinaKey}`;
+
   try {
-    const jinaUrl = `https://r.jina.ai/${url}`;
     const res = await fetch(jinaUrl, {
-      headers: {
-        "Accept": "text/markdown",
-        "X-Return-Format": "markdown",
-        "X-Remove-Selector": "header,footer,nav,.ads,.comments",
-        "Authorization": `Bearer ${process.env.JINA_API_KEY ?? ""}`,
-      },
-      signal: AbortSignal.timeout(30000),
+      headers,
+      signal: AbortSignal.timeout(45000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { ok: false, error: `Jina ${res.status} ${res.statusText}${body ? " — " + body.slice(0, 150) : ""}` };
+    }
     const text = await res.text();
+    if (!text || text.trim().length < 200) {
+      return { ok: false, error: "Jina returned empty / too-little content (page may be blocked or JS-rendered)." };
+    }
     // Trim to ~12000 chars to stay well within token budget
-    return text.slice(0, 12000);
-  } catch {
-    return null;
+    return { ok: true, markdown: text.slice(0, 12000) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: `Network error — ${msg}` };
   }
 }
 
