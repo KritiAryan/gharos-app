@@ -63,12 +63,35 @@ interface FAQ {
   a: string;
 }
 
+/**
+ * Nutrition is intentionally flexible: recipe sites publish different subsets
+ * (some have sodium, some have sugar, some only calories). Store what the
+ * page shows — verbatim — and nothing more.
+ */
 interface NutritionInfo {
-  calories?: number;
-  protein_g?: number;
-  carbs_g?: number;
-  fat_g?: number;
-  fiber_g?: number;
+  // Core macros (most common)
+  calories?: number | null;
+  protein_g?: number | null;
+  carbs_g?: number | null;
+  fat_g?: number | null;
+  fiber_g?: number | null;
+  // Extended macros
+  saturated_fat_g?: number | null;
+  trans_fat_g?: number | null;
+  polyunsaturated_fat_g?: number | null;
+  monounsaturated_fat_g?: number | null;
+  cholesterol_mg?: number | null;
+  sodium_mg?: number | null;
+  potassium_mg?: number | null;
+  sugar_g?: number | null;
+  // Vitamins / minerals (when published)
+  vitamin_a_iu?: number | null;
+  vitamin_c_mg?: number | null;
+  calcium_mg?: number | null;
+  iron_mg?: number | null;
+  // Context
+  serving_note?: string;  // e.g. "per serving", "per 100g", "per plate"
+  raw_text?: string;      // verbatim nutrition block from the recipe
 }
 
 export type ExtractionResult =
@@ -218,6 +241,18 @@ FIDELITY RULES (most important — violations = corrupted data)
    If an ingredient is not in the recipe, omit it. Do not add "salt to taste" unless the
    recipe mentions salt. Do not add "oil" unless the recipe says so.
 
+6. NUTRITION FIDELITY (same rules as ingredients):
+   - If the recipe has NO nutrition block → nutrition: null. DO NOT estimate or calculate.
+   - If the recipe HAS a nutrition block → copy EVERY number the page shows, verbatim.
+     Never round, never convert units, never add fields the page didn't show.
+   - Match the page's units: kcal → "calories", g → "*_g", mg → "*_mg", IU → "*_iu".
+   - Set "serving_note" to the exact phrasing from the page: "per serving", "per 100g",
+     "per plate", "per cup (240 ml)", etc. If the page doesn't say, use "per serving".
+   - Copy the entire nutrition block raw text into "raw_text" (e.g. "Calories 320kcal · Protein 18g · Carbs 12g · Fat 22g · Fiber 4g · Sodium 480mg").
+   - Include extended fields (sodium_mg, sugar_g, saturated_fat_g, cholesterol_mg, vitamin_c_mg, etc.)
+     ONLY if the page lists them. Otherwise omit that key entirely.
+   - If a value is literally "0" on the page, record 0. If it's absent, omit the key.
+
 ══════════════════════════════════════════════════════════════════════════════
 OPTIONAL INGREDIENT DETECTION (is_optional: true when ANY of these apply)
 ══════════════════════════════════════════════════════════════════════════════
@@ -302,8 +337,28 @@ Return JSON matching this exact schema. Study the ingredient examples carefully:
   "tips": ["string"],
   "faqs": [{"q":"","a":""}],
   "notes": ["string"],
-  "nutrition": {"calories":0,"protein_g":0,"carbs_g":0,"fat_g":0,"fiber_g":0}
-}`;
+  "nutrition": {
+    "calories": 320,
+    "protein_g": 18,
+    "carbs_g": 12,
+    "fat_g": 22,
+    "saturated_fat_g": 11,
+    "fiber_g": 4,
+    "sugar_g": 5,
+    "sodium_mg": 480,
+    "cholesterol_mg": 45,
+    "vitamin_c_mg": 12,
+    "calcium_mg": 220,
+    "iron_mg": 2,
+    "serving_note": "per serving",
+    "raw_text": "Calories 320kcal · Carbs 12g · Protein 18g · Fat 22g · Saturated Fat 11g · Cholesterol 45mg · Sodium 480mg · Fiber 4g · Sugar 5g · Calcium 220mg · Vitamin C 12mg · Iron 2mg"
+  }
+}
+
+IMPORTANT about nutrition:
+- Include ONLY the keys the recipe page actually shows. If the page has Calories/Protein/Carbs/Fat/Fiber only → output exactly those 5 + serving_note + raw_text. Omit sodium_mg, sugar_g, etc.
+- If the page has NO nutrition section → "nutrition": null.
+- NEVER estimate or calculate nutrition yourself.`;
 
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
