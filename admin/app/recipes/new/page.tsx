@@ -425,7 +425,7 @@ export default function NewRecipePage() {
 
         {/* JSON fields */}
         {([
-          ["ingredients",     "Ingredients (JSON array)",      `[{"canonical_id":"paneer","display_name":"Paneer","quantity":150,"unit":"grams","is_optional":false,"group":"main","notes":""}]`],
+          ["ingredients",     "Ingredients (JSON array)",      `[{"canonical_id":"paneer","display_name":"Paneer","quantity":150,"unit":"grams","is_optional":false,"group":"main","notes":"","raw_text":"150 grams paneer, cubed"}]`],
           ["steps",           "Steps (JSON array)",             `[{"heading":"Preparation","steps":["Step 1 text","Step 2 text"]}]`],
           ["prep_components", "Prep Components (JSON array)",   `[{"id":"spinach_puree","task":"Blanch + blend spinach","time_minutes":10,"storage_options":[{"location":"refrigerator","shelf_life_days":2},{"location":"freezer","shelf_life_days":30}],"default_location":"refrigerator","portion_note":""}]`],
           ["tips",            "Tips (JSON array of strings)",   `["Use young tender spinach to avoid bitterness"]`],

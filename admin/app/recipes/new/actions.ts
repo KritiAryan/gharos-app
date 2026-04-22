@@ -36,11 +36,12 @@ export interface ExtractedRecipe {
 interface IngredientItem {
   canonical_id: string;
   display_name: string;
-  quantity: number;
+  quantity: number | null;
   unit: string;
   is_optional: boolean;
   group: string;
   notes: string;
+  raw_text: string;   // VERBATIM line from the recipe — for fidelity auditing
 }
 
 interface StepGroup {
@@ -181,28 +182,76 @@ async function fetchCatalogContext(): Promise<string> {
 
 // ─── Step 4: Groq extraction ──────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are Agent B1, an expert Indian recipe extractor for the GharOS meal-planning app.
-Extract structured recipe data from recipe markdown content.
+const SYSTEM_PROMPT = `You are Agent B1, an Indian recipe extractor for the GharOS meal-planning app.
+Your single most important rule: FIDELITY. Extract what the recipe actually says — do not normalize, invent, or paraphrase quantities.
 
-RULES:
-- Return ONLY valid JSON — no markdown fences, no explanation text
+══════════════════════════════════════════════════════════════════════════════
+FIDELITY RULES (most important — violations = corrupted data)
+══════════════════════════════════════════════════════════════════════════════
+
+1. RAW TEXT ALWAYS:
+   Every ingredient MUST include a "raw_text" field with the ingredient line copied verbatim
+   from the recipe, BEFORE any normalization. Example: "¾ tsp ginger garlic paste"
+   If you can't find an exact line for an ingredient, DO NOT INCLUDE that ingredient.
+
+2. NEVER SPLIT COMPOUND INGREDIENTS:
+   If the recipe says "ginger garlic paste", "ginger-garlic paste", "GG paste", or
+   "½ tsp ginger & garlic paste" → output ONE entry with canonical_id "ginger_garlic_paste".
+   DO NOT split into separate "ginger" + "garlic" entries.
+   Same rule for: "tomato puree", "onion-tomato masala", "curd chilli paste", etc.
+
+3. PRESERVE QUANTITIES EXACTLY:
+   - "¾ tsp" → quantity: 0.75, unit: "teaspoon"
+   - "½ cup" → quantity: 0.5, unit: "cup"
+   - "1½ tbsp" → quantity: 1.5, unit: "tablespoon"
+   - "1-2 tsp" → quantity: 1, unit: "teaspoon", notes: "1 to 2 tsp"
+   - "to taste" / "as needed" / "as required" → quantity: null, unit: "to_taste"
+   - "a pinch" → quantity: null, unit: "pinch"
+   - "handful" → quantity: 1, unit: "handful"
+   NEVER round fractions up. NEVER invent a quantity if the recipe doesn't state one.
+
+4. PRESERVE UNITS AS WRITTEN:
+   Use the recipe's own unit (tsp → teaspoon, tbsp → tablespoon, g → grams, ml → millilitres,
+   cup, whole, inch, leaves, sprig, pod, pinch). Never convert cups↔grams or tsp↔ml.
+
+5. NEVER HALLUCINATE:
+   If an ingredient is not in the recipe, omit it. Do not add "salt to taste" unless the
+   recipe mentions salt. Do not add "oil" unless the recipe says so.
+
+══════════════════════════════════════════════════════════════════════════════
+OPTIONAL INGREDIENT DETECTION (is_optional: true when ANY of these apply)
+══════════════════════════════════════════════════════════════════════════════
+
+Set is_optional: true if ANY of these are present in the raw line or its surrounding context:
+  • The word "optional" or "(optional)" appears in or next to the ingredient line
+  • Listed under a heading/section called "Optional", "Optional ingredients", or "For garnish"
+  • Phrased as "or skip if…", "if available", "if you like", "if desired", "as needed for garnish"
+  • Appears after an "or" showing an alternative (mark the alternative as optional)
+  • Used only "for garnish", "to garnish", "to serve", "to sprinkle on top"
+  • Described as a substitute ("can be replaced with…")
+  • Phrased as "you may add", "you can add"
+
+Otherwise is_optional: false. When in doubt, set is_optional: true and add reason to "notes".
+
+══════════════════════════════════════════════════════════════════════════════
+FORMAT RULES
+══════════════════════════════════════════════════════════════════════════════
+
+- Return ONLY valid JSON — no markdown fences, no explanation
 - canonical_name: lowercase, underscores, unique (e.g. "palak_paneer", "dal_tadka")
-- canonical_id for ingredients: match provided catalog IDs where possible; else create snake_case id
-- quantity: numeric value only; unit: separate field ("grams", "cups", "tbsp", "whole", "leaves", etc.)
-- dish_role: one of hero | side | staple | condiment | snack
-- dish_type: one of gravy | dry_sabzi | dal | rice | roti | chutney | raita | biryani | salad | bread | sweet | snack
-- cuisine: one of north_indian | south_indian | east_indian | west_indian | pan_indian | continental | other
-- region: same enum as cuisine
-- meal_types: array, each one of breakfast | lunch | dinner | snack | dessert
-- diet_tags: array, each one of vegetarian | vegan | jain | non_vegetarian | eggetarian
-- prep_components: extract makeable-ahead sub-tasks (e.g. "blanch spinach", "make tomato base")
-  Each has: id (snake_case), task (action phrase), time_minutes, storage_options (array of {location, shelf_life_days}),
-  default_location ("refrigerator" | "freezer" | "counter"), portion_note
-- steps: array of {heading, steps: string[]} — group by phase (Prep, Cooking, Assembly, Serving)
-- nutrition: per serving, with keys calories, protein_g, carbs_g, fat_g, fiber_g (all numbers)
-- pairs_well_with: 2–4 recipe canonical_names that pair well as sides or mains
+- canonical_id: match provided catalog IDs where possible; else create snake_case id
+  (compound pastes → "ginger_garlic_paste", "tomato_puree", etc.)
+- dish_role: hero | side | staple | condiment | snack
+- dish_type: gravy | dry_sabzi | dal | rice | roti | chutney | raita | biryani | salad | bread | sweet | snack
+- cuisine / region: north_indian | south_indian | east_indian | west_indian | pan_indian | continental | other
+- meal_types: array of breakfast | lunch | dinner | snack | dessert
+- diet_tags: array of vegetarian | vegan | jain | non_vegetarian | eggetarian
+- prep_components: makeable-ahead sub-tasks with storage_options and default_location
+- steps: grouped as {heading, steps: string[]} by phase (Prep, Cooking, Assembly, Serving)
+- nutrition: per serving {calories, protein_g, carbs_g, fat_g, fiber_g}
+- pairs_well_with: 2–4 recipe canonical_names
 - key_ingredients: 3–5 defining ingredient canonical_ids
-- If a field is unknown, use null for scalars and [] for arrays`;
+- Unknown scalar → null; unknown array → []`;
 
 async function callGroqExtractor(
   url: string,
@@ -215,12 +264,15 @@ async function callGroqExtractor(
   const sourceHost = new URL(url).hostname.replace("www.", "");
 
   const userMessage = `Extract this recipe from ${sourceHost} and return structured JSON.
+Remember: FIDELITY FIRST. Copy the raw line into "raw_text" for every ingredient.
+NEVER split compound pastes (ginger-garlic paste stays as ONE ingredient).
+Flag optional ingredients accurately (check for "optional", "for garnish", "if desired").
 
 ${catalogContext ? catalogContext + "\n\n" : ""}---RECIPE CONTENT---
 ${markdown}
 ---END CONTENT---
 
-Return JSON matching this exact schema:
+Return JSON matching this exact schema. Study the ingredient examples carefully:
 {
   "canonical_name": "string",
   "display_name": "string",
@@ -239,8 +291,13 @@ Return JSON matching this exact schema:
   "source_author": "string",
   "pairs_well_with": ["canonical_name"],
   "key_ingredients": ["canonical_id"],
-  "ingredients": [{"canonical_id":"","display_name":"","quantity":0,"unit":"","is_optional":false,"group":"main","notes":""}],
-  "steps": [{"heading":"","steps":[]}],
+  "ingredients": [
+    { "canonical_id": "paneer", "display_name": "Paneer", "quantity": 200, "unit": "grams", "is_optional": false, "group": "main", "notes": "", "raw_text": "200 grams paneer, cubed" },
+    { "canonical_id": "ginger_garlic_paste", "display_name": "Ginger Garlic Paste", "quantity": 0.75, "unit": "teaspoon", "is_optional": false, "group": "main", "notes": "", "raw_text": "¾ tsp ginger garlic paste" },
+    { "canonical_id": "kasuri_methi", "display_name": "Kasuri Methi", "quantity": 1, "unit": "teaspoon", "is_optional": true, "group": "garnish", "notes": "for garnish", "raw_text": "1 tsp kasuri methi (optional, for garnish)" },
+    { "canonical_id": "salt", "display_name": "Salt", "quantity": null, "unit": "to_taste", "is_optional": false, "group": "main", "notes": "", "raw_text": "salt as required" }
+  ],
+  "steps": [{"heading":"Preparation","steps":["step 1","step 2"]}],
   "prep_components": [{"id":"","task":"","time_minutes":0,"storage_options":[{"location":"refrigerator","shelf_life_days":2}],"default_location":"refrigerator","portion_note":""}],
   "tips": ["string"],
   "faqs": [{"q":"","a":""}],
@@ -256,8 +313,8 @@ Return JSON matching this exact schema:
     },
     body: JSON.stringify({
       model: "llama-3.3-70b-versatile",
-      temperature: 0.1,
-      max_tokens: 4096,
+      temperature: 0.05,       // lower temp for fidelity — reduce creative rephrasing
+      max_tokens: 6144,        // bumped for raw_text per ingredient
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
