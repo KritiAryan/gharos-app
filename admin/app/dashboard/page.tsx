@@ -9,20 +9,20 @@ async function getStats() {
     supabase.from("meal_history").select("id"),
   ]);
 
-  const r = recipes.data ?? [];
-  const c = catalog.data ?? [];
+  const r = (recipes.data ?? []) as { dish_role: string; cuisine: string; verified: boolean }[];
+  const c = (catalog.data ?? []) as { category: string }[];
 
-  const byRole = r.reduce<Record<string, number>>((acc, row) => {
+  const byRole = r.reduce((acc: Record<string, number>, row) => {
     acc[row.dish_role] = (acc[row.dish_role] ?? 0) + 1;
     return acc;
   }, {});
 
-  const byCuisine = r.reduce<Record<string, number>>((acc, row) => {
+  const byCuisine = r.reduce((acc: Record<string, number>, row) => {
     if (row.cuisine) acc[row.cuisine] = (acc[row.cuisine] ?? 0) + 1;
     return acc;
   }, {});
 
-  const byCategory = c.reduce<Record<string, number>>((acc, row) => {
+  const byCategory = c.reduce((acc: Record<string, number>, row) => {
     if (row.category) acc[row.category] = (acc[row.category] ?? 0) + 1;
     return acc;
   }, {});
