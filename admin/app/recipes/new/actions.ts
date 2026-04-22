@@ -131,6 +131,12 @@ export async function extractRecipe(url: string): Promise<ExtractionResult> {
     const total_time_minutes = extracted.total_time_minutes ?? regexTimings.total_time_minutes
       ?? ((prep_time_minutes && cook_time_minutes) ? prep_time_minutes + cook_time_minutes : null);
 
+    // 7. Deterministic nutrition fallback — same reason, same solution. WPRM/Tasty Recipes
+    //    emit a standardised nutrition block we can reliably parse with regex.
+    //    Merge strategy: prefer LLM value per field; fill gaps from regex.
+    const regexNutrition = extractNutrition(jinaResult.rawMarkdown);
+    const nutrition = mergeNutrition(extracted.nutrition, regexNutrition);
+
     return {
       ok: true,
       data: {
@@ -138,6 +144,7 @@ export async function extractRecipe(url: string): Promise<ExtractionResult> {
         prep_time_minutes,
         cook_time_minutes,
         total_time_minutes,
+        nutrition,
         source_image_url: media.ogImage,
         source_url: url,
         video_url: finalVideoUrl,
@@ -314,6 +321,130 @@ function extractTimings(md: string): {
   if (!total && prep && cook) total = prep + cook;
 
   return { prep_time_minutes: prep, cook_time_minutes: cook, total_time_minutes: total };
+}
+
+/**
+ * Deterministic nutrition extraction.
+ * WordPress Recipe Maker / Tasty Recipes / ZipList output nutrition in patterns like:
+ *   "Calories: 320kcal"  /  "Calories 320"  /  "320 calories"
+ *   "Protein: 18g"       /  "Protein 18 grams"
+ *   "Carbohydrates: 12g" /  "Total Carbs 12g"
+ *   "Fat: 22g"           /  "Saturated Fat: 11g"
+ *   "Fiber: 4g"          /  "Sugar: 5g"
+ *   "Sodium: 480mg"      /  "Cholesterol: 45mg"
+ *   "Vitamin C: 12mg"    /  "Calcium: 220mg"  /  "Iron: 2mg"
+ * Ignores per-100g blocks unless that's all the page has (copied into serving_note).
+ * Used as a fallback when the LLM misses nutrition fields.
+ */
+function extractNutrition(md: string): NutritionInfo | null {
+  // Find the "Nutrition" / "Nutrition Information" / "Nutrition Facts" section first,
+  // then run all numeric pulls against that slice — avoids false positives elsewhere.
+  const sectionMatch = md.match(
+    /(?:^|\n)#{0,6}\s*Nutrition(?:\s+(?:Information|Facts|Info|Values|per serving))?\b[^\n]*\n([\s\S]{0,2000})/i
+  );
+  // If we find a section header, use the next ~2k chars; else use the whole page.
+  const scope = sectionMatch ? sectionMatch[1] : md;
+
+  const pickNumber = (pattern: RegExp): number | null => {
+    const m = scope.match(pattern);
+    if (!m) return null;
+    const n = parseFloat(m[1].replace(/,/g, ""));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  // Label + ":" (optional) + number + unit (optional)
+  // Label can come before OR after the number ("320 calories" / "Calories 320").
+  const labelFirst = (label: string, unit?: string) =>
+    new RegExp(
+      `\\b${label}\\s*[:\\-–—]?\\s*(\\d+(?:[.,]\\d+)?)${unit ? `\\s*${unit}` : ""}`,
+      "i"
+    );
+  const numberFirst = (label: string, unit?: string) =>
+    new RegExp(
+      `(\\d+(?:[.,]\\d+)?)${unit ? `\\s*${unit}` : ""}\\s*${label}`,
+      "i"
+    );
+
+  const find = (labels: string[], unit?: string) => {
+    for (const label of labels) {
+      const n = pickNumber(labelFirst(label, unit)) ?? pickNumber(numberFirst(label, unit));
+      if (n !== null) return n;
+    }
+    return null;
+  };
+
+  const nutrition: NutritionInfo = {};
+
+  const calories               = find(["calories", "energy", "kcal"], "(?:kcal|calories|cal)?");
+  const protein_g              = find(["protein"], "g(?:rams?)?");
+  const carbs_g                = find(["carbohydrates", "carbs", "total\\s*carbs", "carbohydrate"], "g(?:rams?)?");
+  const fat_g                  = find(["total\\s*fat", "\\bfat\\b"], "g(?:rams?)?");
+  const saturated_fat_g        = find(["saturated\\s*fat", "sat\\.?\\s*fat", "saturates?"], "g(?:rams?)?");
+  const trans_fat_g            = find(["trans\\s*fat"], "g(?:rams?)?");
+  const polyunsaturated_fat_g  = find(["polyunsaturated\\s*fat"], "g(?:rams?)?");
+  const monounsaturated_fat_g  = find(["monounsaturated\\s*fat"], "g(?:rams?)?");
+  const fiber_g                = find(["fiber", "fibre", "dietary\\s*fiber", "dietary\\s*fibre"], "g(?:rams?)?");
+  const sugar_g                = find(["sugar", "sugars", "total\\s*sugars?"], "g(?:rams?)?");
+  const sodium_mg              = find(["sodium"], "mg");
+  const cholesterol_mg         = find(["cholesterol"], "mg");
+  const potassium_mg           = find(["potassium"], "mg");
+  const vitamin_a_iu           = find(["vitamin\\s*a"], "(?:iu|i\\.u\\.)");
+  const vitamin_c_mg           = find(["vitamin\\s*c"], "mg");
+  const calcium_mg             = find(["calcium"], "mg");
+  const iron_mg                = find(["iron"], "mg");
+
+  if (calories              !== null) nutrition.calories = calories;
+  if (protein_g             !== null) nutrition.protein_g = protein_g;
+  if (carbs_g               !== null) nutrition.carbs_g = carbs_g;
+  if (fat_g                 !== null) nutrition.fat_g = fat_g;
+  if (saturated_fat_g       !== null) nutrition.saturated_fat_g = saturated_fat_g;
+  if (trans_fat_g           !== null) nutrition.trans_fat_g = trans_fat_g;
+  if (polyunsaturated_fat_g !== null) nutrition.polyunsaturated_fat_g = polyunsaturated_fat_g;
+  if (monounsaturated_fat_g !== null) nutrition.monounsaturated_fat_g = monounsaturated_fat_g;
+  if (fiber_g               !== null) nutrition.fiber_g = fiber_g;
+  if (sugar_g               !== null) nutrition.sugar_g = sugar_g;
+  if (sodium_mg             !== null) nutrition.sodium_mg = sodium_mg;
+  if (cholesterol_mg        !== null) nutrition.cholesterol_mg = cholesterol_mg;
+  if (potassium_mg          !== null) nutrition.potassium_mg = potassium_mg;
+  if (vitamin_a_iu          !== null) nutrition.vitamin_a_iu = vitamin_a_iu;
+  if (vitamin_c_mg          !== null) nutrition.vitamin_c_mg = vitamin_c_mg;
+  if (calcium_mg            !== null) nutrition.calcium_mg = calcium_mg;
+  if (iron_mg               !== null) nutrition.iron_mg = iron_mg;
+
+  // Only return an object if we actually found something
+  if (Object.keys(nutrition).length === 0) return null;
+
+  // Detect serving basis
+  const servingNote = (scope.match(/\bper\s+(serving|100\s*g|100\s*grams|plate|cup|portion)\b/i)?.[0])
+    ?? "per serving";
+  nutrition.serving_note = servingNote.toLowerCase();
+
+  // Preserve the raw nutrition block for auditability (~400 chars max)
+  nutrition.raw_text = scope.replace(/\s+/g, " ").trim().slice(0, 400);
+
+  return nutrition;
+}
+
+/**
+ * Merge LLM-extracted nutrition with regex-extracted nutrition.
+ * Per-field preference: LLM value wins if present; regex fills in the gaps.
+ * Returns null only if BOTH sources are empty.
+ */
+function mergeNutrition(
+  llm: NutritionInfo | null | undefined,
+  regex: NutritionInfo | null
+): NutritionInfo | null {
+  if (!llm && !regex) return null;
+  if (!llm) return regex;
+  if (!regex) return llm;
+
+  const merged: NutritionInfo = { ...regex, ...llm };
+
+  // If LLM didn't supply raw_text or serving_note, use the regex ones
+  merged.serving_note = llm.serving_note ?? regex.serving_note;
+  merged.raw_text     = llm.raw_text     ?? regex.raw_text;
+
+  return merged;
 }
 
 /** Strip recipe-site boilerplate so the token budget gets spent on actual recipe content. */
