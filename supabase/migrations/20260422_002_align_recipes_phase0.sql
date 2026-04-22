@@ -24,7 +24,7 @@ ALTER TABLE recipes RENAME COLUMN image_url         TO source_image_url;
 ALTER TABLE recipes DROP COLUMN IF EXISTS total_time_mins;
 ALTER TABLE recipes DROP COLUMN IF EXISTS total_time_minutes;
 ALTER TABLE recipes ADD COLUMN total_time_minutes integer GENERATED ALWAYS AS
-  (prep_time_minutes + cook_time_minutes) STORED;
+  (COALESCE(prep_time_minutes, 0) + COALESCE(cook_time_minutes, 0)) STORED;
 
 -- serving_size is an integer base_servings was added separately.
 -- If serving_size has useful data and base_servings is default,
