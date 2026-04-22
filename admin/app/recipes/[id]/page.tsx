@@ -295,6 +295,12 @@ export default function RecipeDetailPage() {
               <input className={inputCls} value={(form.source_author as string) ?? ""}
                 onChange={e => setField("source_author", e.target.value)} />
             </div>
+            <div className="col-span-3">
+              <FieldLabel hint="YouTube URL if the source page has an embedded video">Video URL</FieldLabel>
+              <input className={inputCls} value={(form.video_url as string) ?? ""}
+                onChange={e => setField("video_url", e.target.value)}
+                placeholder="https://www.youtube.com/watch?v=…" />
+            </div>
           </div>
         </Section>
 

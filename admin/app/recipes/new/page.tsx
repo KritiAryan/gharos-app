@@ -39,6 +39,7 @@ const EMPTY_RECIPE = {
   nutrition: "",
   verified: false,
   source_image_url: null as string | null,
+  video_url: "" as string,
 };
 
 type FormState = typeof EMPTY_RECIPE;
@@ -98,7 +99,8 @@ function extractedToForm(e: ExtractedRecipe, url: string): FormState {
     notes:               JSON.stringify(e.notes ?? [], null, 2),
     nutrition:           e.nutrition ? JSON.stringify(e.nutrition, null, 2) : "",
     verified:            false,
-    source_image_url:        e.source_image_url ?? null,
+    source_image_url:    e.source_image_url ?? null,
+    video_url:           e.video_url ?? "",
   };
 }
 
@@ -201,7 +203,8 @@ export default function NewRecipePage() {
         notes:               parseArr(form.notes),
         prep_components:     parseArr(form.prep_components),
         nutrition:           parseOptional(form.nutrition),
-        source_image_url:        form.source_image_url || null,
+        source_image_url:    form.source_image_url || null,
+        video_url:           form.video_url.trim() || null,
         verified,
         extraction_confidence: extracted ? "high" : "manual",
         extracted_at:        new Date().toISOString(),
@@ -402,6 +405,22 @@ export default function NewRecipePage() {
               <input className={inputCls} value={form.source_author}
                 onChange={e => setField("source_author", e.target.value)} placeholder="Swasthi" />
             </div>
+            <div className="col-span-3">
+              <FieldLabel hint="YouTube URL if the page has an embedded recipe video">
+                Video URL
+              </FieldLabel>
+              <input
+                className={inputCls}
+                value={form.video_url}
+                onChange={e => setField("video_url", e.target.value)}
+                placeholder="https://www.youtube.com/watch?v=…"
+              />
+              {form.video_url && isValidYouTube(form.video_url) && (
+                <p className="text-xs text-brand-muted mt-1">
+                  ✓ Recognised YouTube video — ID: <code className="text-brand-primary">{youTubeId(form.video_url)}</code>
+                </p>
+              )}
+            </div>
           </div>
         </Section>
 
@@ -490,6 +509,15 @@ function Select({ value, options, onChange }: { value: string; options: string[]
       {options.map(o => <option key={o} value={o}>{o || "— select —"}</option>)}
     </select>
   );
+}
+
+function isValidYouTube(url: string): boolean {
+  return /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)[A-Za-z0-9_\-]{6,}/.test(url);
+}
+
+function youTubeId(url: string): string | null {
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([A-Za-z0-9_\-]{6,})/);
+  return m?.[1] ?? null;
 }
 
 function PillGroup({ options, selected, onToggle }: { options: string[]; selected: string[]; onToggle: (v: string) => void }) {

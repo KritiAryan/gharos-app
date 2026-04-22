@@ -31,6 +31,7 @@ export interface ExtractedRecipe {
   notes: string[];
   nutrition: NutritionInfo | null;
   source_image_url: string | null;  // og:image from source page
+  video_url: string | null;         // YouTube/Vimeo link if found on page
 }
 
 interface IngredientItem {
@@ -69,13 +70,11 @@ interface FAQ {
  * page shows — verbatim — and nothing more.
  */
 interface NutritionInfo {
-  // Core macros (most common)
   calories?: number | null;
   protein_g?: number | null;
   carbs_g?: number | null;
   fat_g?: number | null;
   fiber_g?: number | null;
-  // Extended macros
   saturated_fat_g?: number | null;
   trans_fat_g?: number | null;
   polyunsaturated_fat_g?: number | null;
@@ -84,14 +83,12 @@ interface NutritionInfo {
   sodium_mg?: number | null;
   potassium_mg?: number | null;
   sugar_g?: number | null;
-  // Vitamins / minerals (when published)
   vitamin_a_iu?: number | null;
   vitamin_c_mg?: number | null;
   calcium_mg?: number | null;
   iron_mg?: number | null;
-  // Context
-  serving_note?: string;  // e.g. "per serving", "per 100g", "per plate"
-  raw_text?: string;      // verbatim nutrition block from the recipe
+  serving_note?: string;
+  raw_text?: string;
 }
 
 export type ExtractionResult =
@@ -106,8 +103,8 @@ export async function extractRecipe(url: string): Promise<ExtractionResult> {
   }
 
   try {
-    // 1. Fetch og:image from source page (non-blocking — failure is OK)
-    const ogImage = await fetchOgImage(url);
+    // 1. Fetch og:image + video_url in one HTML pass
+    const media = await fetchMedia(url);
 
     // 2. Fetch markdown content via Jina reader
     const jinaResult = await fetchJinaMarkdown(url);
@@ -121,7 +118,19 @@ export async function extractRecipe(url: string): Promise<ExtractionResult> {
     // 4. Call Groq to extract structured recipe
     const extracted = await callGroqExtractor(url, jinaResult.markdown, catalog);
 
-    return { ok: true, data: { ...extracted, source_image_url: ogImage, source_url: url } };
+    // 5. Prefer programmatic video_url from HTML scan (more reliable);
+    //    fall back to whatever the LLM may have pulled from markdown.
+    const finalVideoUrl = media.videoUrl ?? extracted.video_url ?? null;
+
+    return {
+      ok: true,
+      data: {
+        ...extracted,
+        source_image_url: media.ogImage,
+        source_url: url,
+        video_url: finalVideoUrl,
+      },
+    };
   } catch (e) {
     console.error("[B1 extractRecipe]", e);
     return {
@@ -131,20 +140,77 @@ export async function extractRecipe(url: string): Promise<ExtractionResult> {
   }
 }
 
-// ─── Step 1: og:image ─────────────────────────────────────────────────────────
+// ─── Step 1: og:image + video scan ────────────────────────────────────────────
 
-async function fetchOgImage(url: string): Promise<string | null> {
+async function fetchMedia(url: string): Promise<{ ogImage: string | null; videoUrl: string | null }> {
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 GharOS-Admin/1.0" },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(10000),
     });
     const html = await res.text();
-    const match = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
-      ?? html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-    return match?.[1] ?? null;
+
+    // og:image
+    const ogMatch =
+      html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ??
+      html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+    const ogImage = ogMatch?.[1] ?? null;
+
+    // YouTube video — scan for iframe embed, watch URL, youtu.be, og:video
+    const videoUrl = extractYouTubeUrl(html);
+
+    return { ogImage, videoUrl };
   } catch {
-    return null;
+    return { ogImage: null, videoUrl: null };
+  }
+}
+
+function extractYouTubeUrl(html: string): string | null {
+  // Normalise YouTube URL candidates found in HTML
+  // Priority: explicit og:video / twitter:player → iframe src → anchor href → bare URL
+  const patterns: RegExp[] = [
+    /<meta[^>]+property=["']og:video(?::url)?["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+name=["']twitter:player["'][^>]+content=["']([^"']+)["']/i,
+    /<iframe[^>]+src=["']([^"']*youtube(?:-nocookie)?\.com\/embed\/[^"']+)["']/i,
+    /<iframe[^>]+src=["']([^"']*youtu\.be\/[^"']+)["']/i,
+    /<a[^>]+href=["'](https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[^"']+)["']/i,
+    /<a[^>]+href=["'](https?:\/\/youtu\.be\/[^"']+)["']/i,
+    /(https?:\/\/(?:www\.)?youtube\.com\/watch\?v=[A-Za-z0-9_\-]{6,})/i,
+    /(https?:\/\/youtu\.be\/[A-Za-z0-9_\-]{6,})/i,
+    /(https?:\/\/(?:www\.)?youtube(?:-nocookie)?\.com\/embed\/[A-Za-z0-9_\-]{6,})/i,
+  ];
+
+  for (const re of patterns) {
+    const match = html.match(re);
+    if (match?.[1]) {
+      return normaliseYouTubeUrl(match[1]);
+    }
+  }
+  return null;
+}
+
+/** Convert any YouTube URL variant → canonical youtube.com/watch?v=ID form. */
+function normaliseYouTubeUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    // youtu.be/ID
+    if (u.hostname.includes("youtu.be")) {
+      const id = u.pathname.slice(1).split("/")[0];
+      if (id) return `https://www.youtube.com/watch?v=${id}`;
+    }
+    // youtube.com/embed/ID or -nocookie variant
+    if (u.pathname.startsWith("/embed/")) {
+      const id = u.pathname.replace("/embed/", "").split("/")[0];
+      if (id) return `https://www.youtube.com/watch?v=${id}`;
+    }
+    // Already a watch URL — preserve video id only (drop tracking params)
+    if (u.searchParams.has("v")) {
+      const id = u.searchParams.get("v");
+      if (id) return `https://www.youtube.com/watch?v=${id}`;
+    }
+    return raw;
+  } catch {
+    return raw;
   }
 }
 
@@ -159,7 +225,6 @@ async function fetchJinaMarkdown(url: string): Promise<JinaResult> {
     "X-Return-Format": "markdown",
     "X-Remove-Selector": "header,footer,nav,.ads,.comments",
   };
-  // Only send Authorization header if API key is actually set (empty Bearer is rejected)
   const jinaKey = process.env.JINA_API_KEY;
   if (jinaKey) headers.Authorization = `Bearer ${jinaKey}`;
 
@@ -176,8 +241,8 @@ async function fetchJinaMarkdown(url: string): Promise<JinaResult> {
     if (!text || text.trim().length < 200) {
       return { ok: false, error: "Jina returned empty / too-little content (page may be blocked or JS-rendered)." };
     }
-    // Trim to ~12000 chars to stay well within token budget
-    return { ok: true, markdown: text.slice(0, 12000) };
+    // Trim to ~18000 chars (was 12k — long recipes were getting truncated before FAQs/tips section)
+    return { ok: true, markdown: text.slice(0, 18000) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: `Network error — ${msg}` };
@@ -206,65 +271,131 @@ async function fetchCatalogContext(): Promise<string> {
 // ─── Step 4: Groq extraction ──────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are Agent B1, an Indian recipe extractor for the GharOS meal-planning app.
-Your single most important rule: FIDELITY. Extract what the recipe actually says — do not normalize, invent, or paraphrase quantities.
+Your job is ARCHIVAL, not editorial. You are a transcription machine, not a summariser.
 
 ══════════════════════════════════════════════════════════════════════════════
-FIDELITY RULES (most important — violations = corrupted data)
+TWO ABSOLUTE LAWS
+══════════════════════════════════════════════════════════════════════════════
+
+LAW 1 — FIDELITY: Copy what the recipe says, word for word where possible.
+        Never normalise, round, estimate, or invent. If the page doesn't state
+        something, leave it null or omit the key. Never fill gaps from general
+        knowledge of Indian cooking.
+
+LAW 2 — COMPLETENESS: Extract EVERY item the page shows.
+        If the page lists 9 tips, return 9 tips.
+        If the page lists 7 FAQs, return 7 FAQs.
+        If the page has 5 step sections (Prep, Gravy, Paneer prep, Assembly,
+        Serving), return 5 step groups.
+        Under no circumstances sample, condense, or pick "the important ones".
+        A missing item is a bug, not a style choice.
+
+══════════════════════════════════════════════════════════════════════════════
+FIDELITY RULES (detail)
 ══════════════════════════════════════════════════════════════════════════════
 
 1. RAW TEXT ALWAYS:
-   Every ingredient MUST include a "raw_text" field with the ingredient line copied verbatim
-   from the recipe, BEFORE any normalization. Example: "¾ tsp ginger garlic paste"
-   If you can't find an exact line for an ingredient, DO NOT INCLUDE that ingredient.
+   Every ingredient MUST include "raw_text" — the ingredient line copied verbatim.
+   Example: "¾ tsp ginger garlic paste"
 
 2. NEVER SPLIT COMPOUND INGREDIENTS:
-   If the recipe says "ginger garlic paste", "ginger-garlic paste", "GG paste", or
-   "½ tsp ginger & garlic paste" → output ONE entry with canonical_id "ginger_garlic_paste".
-   DO NOT split into separate "ginger" + "garlic" entries.
-   Same rule for: "tomato puree", "onion-tomato masala", "curd chilli paste", etc.
+   "ginger garlic paste", "ginger-garlic paste", "GG paste", "½ tsp ginger & garlic paste"
+   → ONE entry with canonical_id "ginger_garlic_paste".
+   Same for: tomato puree, onion-tomato masala, curd chilli paste, etc.
 
 3. PRESERVE QUANTITIES EXACTLY:
    - "¾ tsp" → quantity: 0.75, unit: "teaspoon"
    - "½ cup" → quantity: 0.5, unit: "cup"
    - "1½ tbsp" → quantity: 1.5, unit: "tablespoon"
    - "1-2 tsp" → quantity: 1, unit: "teaspoon", notes: "1 to 2 tsp"
-   - "to taste" / "as needed" / "as required" → quantity: null, unit: "to_taste"
+   - "to taste" → quantity: null, unit: "to_taste"
    - "a pinch" → quantity: null, unit: "pinch"
-   - "handful" → quantity: 1, unit: "handful"
-   NEVER round fractions up. NEVER invent a quantity if the recipe doesn't state one.
+   NEVER round. NEVER invent.
 
 4. PRESERVE UNITS AS WRITTEN:
-   Use the recipe's own unit (tsp → teaspoon, tbsp → tablespoon, g → grams, ml → millilitres,
-   cup, whole, inch, leaves, sprig, pod, pinch). Never convert cups↔grams or tsp↔ml.
+   Use the recipe's own unit (tsp/teaspoon, tbsp/tablespoon, g/grams, ml/millilitres,
+   cup, whole, inch, leaves, sprig, pod, pinch). Never convert between units.
 
-5. NEVER HALLUCINATE:
-   If an ingredient is not in the recipe, omit it. Do not add "salt to taste" unless the
-   recipe mentions salt. Do not add "oil" unless the recipe says so.
+5. NEVER HALLUCINATE INGREDIENTS:
+   Do not add "salt to taste" unless the page says so. Do not add "oil" or "water"
+   unless they appear in the ingredient list.
 
-6. NUTRITION FIDELITY (same rules as ingredients):
-   - If the recipe has NO nutrition block → nutrition: null. DO NOT estimate or calculate.
-   - If the recipe HAS a nutrition block → copy EVERY number the page shows, verbatim.
-     Never round, never convert units, never add fields the page didn't show.
-   - Match the page's units: kcal → "calories", g → "*_g", mg → "*_mg", IU → "*_iu".
-   - Set "serving_note" to the exact phrasing from the page: "per serving", "per 100g",
-     "per plate", "per cup (240 ml)", etc. If the page doesn't say, use "per serving".
-   - Copy the entire nutrition block raw text into "raw_text" (e.g. "Calories 320kcal · Protein 18g · Carbs 12g · Fat 22g · Fiber 4g · Sodium 480mg").
-   - Include extended fields (sodium_mg, sugar_g, saturated_fat_g, cholesterol_mg, vitamin_c_mg, etc.)
-     ONLY if the page lists them. Otherwise omit that key entirely.
-   - If a value is literally "0" on the page, record 0. If it's absent, omit the key.
+6. NUTRITION FIDELITY:
+   - If the page has NO nutrition block → nutrition: null. DO NOT estimate.
+   - If the page HAS nutrition → copy every number verbatim. Include ONLY the keys
+     the page actually shows. Omit others (don't invent).
+   - Set "serving_note" to the exact phrasing ("per serving", "per 100g", etc.)
+   - Copy the entire nutrition block verbatim into "raw_text".
 
 ══════════════════════════════════════════════════════════════════════════════
-OPTIONAL INGREDIENT DETECTION (is_optional: true when ANY of these apply)
+COMPLETENESS RULES (detail — do this carefully)
 ══════════════════════════════════════════════════════════════════════════════
 
-Set is_optional: true if ANY of these are present in the raw line or its surrounding context:
-  • The word "optional" or "(optional)" appears in or next to the ingredient line
-  • Listed under a heading/section called "Optional", "Optional ingredients", or "For garnish"
-  • Phrased as "or skip if…", "if available", "if you like", "if desired", "as needed for garnish"
-  • Appears after an "or" showing an alternative (mark the alternative as optional)
-  • Used only "for garnish", "to garnish", "to serve", "to sprinkle on top"
-  • Described as a substitute ("can be replaced with…")
-  • Phrased as "you may add", "you can add"
+STEPS:
+  A full recipe typically has MULTIPLE phases. For a dish like palak paneer, a
+  complete steps array should include SEPARATE groups such as:
+    1. "Preparation" or "Prep work"  — blanching spinach, prepping paneer, etc.
+    2. "Making the gravy / base"     — onion-tomato-cashew masala
+    3. "Making the main dish"        — combining gravy + spinach puree
+    4. "Adding paneer / final cook"  — tempering, kasuri methi, cream, paneer
+    5. "Serving" / "How to serve"    — garnish + pairing suggestions
+
+  Walk through the recipe page section by section. Copy the HEADING verbatim from
+  the page (don't invent headings like "Preparation" if the page says "Prep Work").
+  Each step within a group must be a single action. Do not merge two steps into one.
+
+  If the page has 18 numbered steps total across 4 sections → return 4 groups whose
+  steps arrays together contain all 18 items. Never truncate.
+
+TIPS & NOTES:
+  Extract EVERY tip paragraph/bullet under the "Tips", "Pro Tips", "Expert Tips",
+  "Notes", "Substitutions", or similar sections. Keep each as a separate string.
+  Copy the tip text verbatim (light cleanup of surrounding whitespace only).
+  If the page has 12 tips, tips[] must have length 12.
+
+FAQs:
+  Extract every Q&A pair under "FAQs", "Frequently Asked Questions", "People also
+  ask", or similar. If the page has 8 FAQs, faqs[] must have length 8.
+  Copy question and answer verbatim.
+
+NOTES vs TIPS distinction:
+  • "tips" = practical cooking advice ("use young tender spinach", "blanch briefly").
+  • "notes" = substitutions, scaling, storage, nutrition notes, recipe variations.
+  If the page labels a section "Notes", put those in notes[]. If it labels a section
+  "Tips", put them in tips[]. If both exist, populate both arrays.
+
+PREP COMPONENTS (make-ahead tasks):
+  Identify sub-tasks that can be prepared hours or days ahead of the final cook.
+  EVERY prep component MUST include:
+    • id: snake_case identifier
+    • task: short action phrase (e.g. "Blanch and purée spinach")
+    • time_minutes: estimated time for this sub-task
+    • storage_options: MANDATORY — array with AT LEAST one {location, shelf_life_days}.
+        Typical defaults if the recipe doesn't specify explicitly:
+          - Leafy purées (spinach, coriander): fridge 2d, freezer 30d
+          - Onion-tomato masala: fridge 3d, freezer 60d
+          - Cashew paste: fridge 2d, freezer 30d
+          - Boiled potatoes/peas: fridge 3d, freezer 30d
+          - Marinated paneer/tofu: fridge 1d (do not freeze)
+    • default_location: one of "refrigerator", "freezer", "counter"
+    • portion_note: how to divvy up (e.g. "freeze in ice-cube tray, 2 cubes per serving",
+      "store in small ziplock pouches for single-batch cooks")
+
+YOUTUBE VIDEO:
+  Scan the markdown for any YouTube link (youtube.com/watch, youtu.be, youtube.com/embed).
+  If found, set "video_url" to that URL. If not found → video_url: null.
+
+══════════════════════════════════════════════════════════════════════════════
+OPTIONAL INGREDIENT DETECTION
+══════════════════════════════════════════════════════════════════════════════
+
+Set is_optional: true if ANY of these apply:
+  • "optional" or "(optional)" in the line
+  • Under a heading called "Optional", "Optional ingredients", "For garnish"
+  • "or skip if…", "if available", "if you like", "if desired"
+  • After an "or" showing an alternative
+  • "for garnish", "to garnish", "to serve", "to sprinkle on top"
+  • "can be replaced with…" / "you may add" / "you can add"
 
 Otherwise is_optional: false. When in doubt, set is_optional: true and add reason to "notes".
 
@@ -272,21 +403,32 @@ Otherwise is_optional: false. When in doubt, set is_optional: true and add reaso
 FORMAT RULES
 ══════════════════════════════════════════════════════════════════════════════
 
-- Return ONLY valid JSON — no markdown fences, no explanation
-- canonical_name: lowercase, underscores, unique (e.g. "palak_paneer", "dal_tadka")
-- canonical_id: match provided catalog IDs where possible; else create snake_case id
-  (compound pastes → "ginger_garlic_paste", "tomato_puree", etc.)
+- Return ONLY valid JSON — no markdown fences, no explanation text
+- canonical_name: lowercase_snake_case, unique
+- canonical_id: match the provided catalog where possible; else snake_case
 - dish_role: hero | side | staple | condiment | snack
 - dish_type: gravy | dry_sabzi | dal | rice | roti | chutney | raita | biryani | salad | bread | sweet | snack
-- cuisine / region: north_indian | south_indian | east_indian | west_indian | pan_indian | continental | other
-- meal_types: array of breakfast | lunch | dinner | snack | dessert
-- diet_tags: array of vegetarian | vegan | jain | non_vegetarian | eggetarian
-- prep_components: makeable-ahead sub-tasks with storage_options and default_location
-- steps: grouped as {heading, steps: string[]} by phase (Prep, Cooking, Assembly, Serving)
-- nutrition: per serving {calories, protein_g, carbs_g, fat_g, fiber_g}
+- cuisine/region: north_indian | south_indian | east_indian | west_indian | pan_indian | continental | other
+- meal_types: breakfast | lunch | dinner | snack | dessert
+- diet_tags: vegetarian | vegan | jain | non_vegetarian | eggetarian
 - pairs_well_with: 2–4 recipe canonical_names
 - key_ingredients: 3–5 defining ingredient canonical_ids
-- Unknown scalar → null; unknown array → []`;
+- Unknown scalar → null; unknown array → []
+
+══════════════════════════════════════════════════════════════════════════════
+SELF-CHECK BEFORE RETURNING
+══════════════════════════════════════════════════════════════════════════════
+
+Before producing your JSON, silently verify:
+  ☐ Did I count the tip items on the page and match that count in tips[]?
+  ☐ Did I count the FAQ pairs and match that count in faqs[]?
+  ☐ Did I count the notes items and match that count in notes[]?
+  ☐ Did I include ALL recipe phases in steps[] (prep, gravy, assembly, serving)?
+  ☐ Does every ingredient have a raw_text field?
+  ☐ Does every prep_component have a non-empty storage_options array?
+  ☐ If the page has a YouTube video, did I capture its URL in video_url?
+
+Only then return the JSON.`;
 
 async function callGroqExtractor(
   url: string,
@@ -299,15 +441,16 @@ async function callGroqExtractor(
   const sourceHost = new URL(url).hostname.replace("www.", "");
 
   const userMessage = `Extract this recipe from ${sourceHost} and return structured JSON.
-Remember: FIDELITY FIRST. Copy the raw line into "raw_text" for every ingredient.
-NEVER split compound pastes (ginger-garlic paste stays as ONE ingredient).
-Flag optional ingredients accurately (check for "optional", "for garnish", "if desired").
+
+LAWS (reminder):
+  1. FIDELITY — copy verbatim, never normalise or invent
+  2. COMPLETENESS — capture EVERY tip, FAQ, note, and step phase the page shows
 
 ${catalogContext ? catalogContext + "\n\n" : ""}---RECIPE CONTENT---
 ${markdown}
 ---END CONTENT---
 
-Return JSON matching this exact schema. Study the ingredient examples carefully:
+Return JSON matching this exact schema. Study the ingredient + nutrition + prep_component examples:
 {
   "canonical_name": "string",
   "display_name": "string",
@@ -324,6 +467,7 @@ Return JSON matching this exact schema. Study the ingredient examples carefully:
   "base_servings": number,
   "source_name": "string",
   "source_author": "string",
+  "video_url": "https://www.youtube.com/watch?v=XXX" or null,
   "pairs_well_with": ["canonical_name"],
   "key_ingredients": ["canonical_id"],
   "ingredients": [
@@ -332,11 +476,39 @@ Return JSON matching this exact schema. Study the ingredient examples carefully:
     { "canonical_id": "kasuri_methi", "display_name": "Kasuri Methi", "quantity": 1, "unit": "teaspoon", "is_optional": true, "group": "garnish", "notes": "for garnish", "raw_text": "1 tsp kasuri methi (optional, for garnish)" },
     { "canonical_id": "salt", "display_name": "Salt", "quantity": null, "unit": "to_taste", "is_optional": false, "group": "main", "notes": "", "raw_text": "salt as required" }
   ],
-  "steps": [{"heading":"Preparation","steps":["step 1","step 2"]}],
-  "prep_components": [{"id":"","task":"","time_minutes":0,"storage_options":[{"location":"refrigerator","shelf_life_days":2}],"default_location":"refrigerator","portion_note":""}],
-  "tips": ["string"],
-  "faqs": [{"q":"","a":""}],
-  "notes": ["string"],
+  "steps": [
+    {"heading": "Preparation", "steps": ["Wash and blanch the spinach…", "Drain and plunge into ice water…", "Cube the paneer…"]},
+    {"heading": "Making the base / gravy", "steps": ["Heat oil + butter…", "Add whole spices…", "Sauté onions…", "Add ginger garlic paste…", "Add tomatoes, cook till mushy…", "Cool and blend with cashews…"]},
+    {"heading": "Making palak paneer", "steps": ["Return purée to pan…", "Add spinach purée…", "Simmer 3–4 minutes…", "Add garam masala…", "Add paneer cubes…", "Add kasuri methi + cream…"]},
+    {"heading": "Serving", "steps": ["Garnish with cream swirl…", "Serve hot with roti, naan, or jeera rice…"]}
+  ],
+  "prep_components": [
+    {
+      "id": "spinach_puree",
+      "task": "Blanch and purée spinach",
+      "time_minutes": 10,
+      "storage_options": [
+        {"location": "refrigerator", "shelf_life_days": 2},
+        {"location": "freezer",      "shelf_life_days": 30}
+      ],
+      "default_location": "refrigerator",
+      "portion_note": "Freeze in ice-cube tray; 2 cubes per serving"
+    },
+    {
+      "id": "onion_tomato_base",
+      "task": "Sauté onion-tomato-cashew base and blend",
+      "time_minutes": 20,
+      "storage_options": [
+        {"location": "refrigerator", "shelf_life_days": 3},
+        {"location": "freezer",      "shelf_life_days": 60}
+      ],
+      "default_location": "refrigerator",
+      "portion_note": "Store in small ziplock pouches per single batch"
+    }
+  ],
+  "tips": ["EVERY tip from the page, verbatim, as a separate string"],
+  "faqs": [{"q": "EVERY question, verbatim", "a": "EVERY answer, verbatim"}],
+  "notes": ["EVERY substitution / storage / scaling / variation note from the page, verbatim"],
   "nutrition": {
     "calories": 320,
     "protein_g": 18,
@@ -351,14 +523,16 @@ Return JSON matching this exact schema. Study the ingredient examples carefully:
     "calcium_mg": 220,
     "iron_mg": 2,
     "serving_note": "per serving",
-    "raw_text": "Calories 320kcal · Carbs 12g · Protein 18g · Fat 22g · Saturated Fat 11g · Cholesterol 45mg · Sodium 480mg · Fiber 4g · Sugar 5g · Calcium 220mg · Vitamin C 12mg · Iron 2mg"
+    "raw_text": "Calories 320kcal · Carbs 12g · Protein 18g · Fat 22g …"
   }
 }
 
-IMPORTANT about nutrition:
-- Include ONLY the keys the recipe page actually shows. If the page has Calories/Protein/Carbs/Fat/Fiber only → output exactly those 5 + serving_note + raw_text. Omit sodium_mg, sugar_g, etc.
-- If the page has NO nutrition section → "nutrition": null.
-- NEVER estimate or calculate nutrition yourself.`;
+REMINDERS:
+• NUTRITION: include only keys the page actually shows. If the page has no nutrition, set nutrition: null. Never estimate.
+• STEPS: include ALL phases of cooking (prep → base → main dish → serving). Don't stop at "making gravy".
+• TIPS / NOTES / FAQs: count them on the page, match the count exactly. Zero tolerance for sampling.
+• PREP COMPONENTS: storage_options MUST be a non-empty array. Use sensible defaults if the recipe doesn't spell them out.
+• VIDEO: if you see a youtube.com or youtu.be link anywhere in the page content, set video_url to it. Otherwise null.`;
 
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
@@ -368,15 +542,15 @@ IMPORTANT about nutrition:
     },
     body: JSON.stringify({
       model: "llama-3.3-70b-versatile",
-      temperature: 0.05,       // lower temp for fidelity — reduce creative rephrasing
-      max_tokens: 6144,        // bumped for raw_text per ingredient
+      temperature: 0.05,
+      max_tokens: 8000,           // bumped to fit full tips/FAQs/notes/steps + raw_text
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userMessage },
       ],
     }),
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(90000),   // bumped — bigger responses take longer
   });
 
   if (!res.ok) {
@@ -392,11 +566,20 @@ IMPORTANT about nutrition:
   try {
     parsed = JSON.parse(content);
   } catch {
-    throw new Error("Groq returned invalid JSON. Try again.");
+    throw new Error("Groq returned invalid JSON (possibly truncated — try again).");
   }
 
-  // Ensure arrays are arrays (defensive)
+  // Defensive array coercion + enforce storage_options on every prep_component
   const ensureArr = (v: unknown) => (Array.isArray(v) ? v : []);
+  const prepWithStorage = ensureArr(parsed.prep_components).map((p: PrepComponent) => ({
+    ...p,
+    storage_options:
+      Array.isArray(p.storage_options) && p.storage_options.length > 0
+        ? p.storage_options
+        : [{ location: "refrigerator", shelf_life_days: 2 }],  // last-resort fallback
+    default_location: p.default_location || "refrigerator",
+  }));
+
   return {
     ...parsed,
     meal_types:        ensureArr(parsed.meal_types),
@@ -405,11 +588,12 @@ IMPORTANT about nutrition:
     key_ingredients:   ensureArr(parsed.key_ingredients),
     ingredients:       ensureArr(parsed.ingredients),
     steps:             ensureArr(parsed.steps),
-    prep_components:   ensureArr(parsed.prep_components),
+    prep_components:   prepWithStorage,
     tips:              ensureArr(parsed.tips),
     faqs:              ensureArr(parsed.faqs),
     notes:             ensureArr(parsed.notes),
     source_image_url:  null, // populated by caller
     source_url:        url,  // populated by caller
+    video_url:         parsed.video_url ?? null,
   };
 }
