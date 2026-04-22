@@ -40,7 +40,11 @@ CREATE TABLE recipes (
   -- Timing & serving
   prep_time_minutes     integer,
   cook_time_minutes     integer,
-  total_time_minutes    integer,
+  -- Generated column — prep + cook. NEVER write to this directly
+  -- (Postgres throws 428C9 on INSERT/UPDATE). NULLs propagate: if
+  -- either input is NULL, total_time_minutes is NULL.
+  total_time_minutes    integer GENERATED ALWAYS AS
+                          (prep_time_minutes + cook_time_minutes) STORED,
   base_servings         integer DEFAULT 2,
 
   -- Core content (required)

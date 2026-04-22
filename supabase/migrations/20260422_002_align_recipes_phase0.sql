@@ -14,10 +14,17 @@ BEGIN;
 -- ── 1. Rename legacy columns to Phase-0 names (preserves data) ──
 ALTER TABLE recipes RENAME COLUMN prep_time_mins    TO prep_time_minutes;
 ALTER TABLE recipes RENAME COLUMN cook_time_mins    TO cook_time_minutes;
-ALTER TABLE recipes RENAME COLUMN total_time_mins   TO total_time_minutes;
 ALTER TABLE recipes RENAME COLUMN instructions      TO steps;
 ALTER TABLE recipes RENAME COLUMN macros_per_serving TO nutrition;
 ALTER TABLE recipes RENAME COLUMN image_url         TO source_image_url;
+
+-- total_time_mins → total_time_minutes, but make it a GENERATED column
+-- (matching Phase-0 definition). Can't rename+convert in one step, so
+-- drop and re-add as generated. Any existing values are recomputed.
+ALTER TABLE recipes DROP COLUMN IF EXISTS total_time_mins;
+ALTER TABLE recipes DROP COLUMN IF EXISTS total_time_minutes;
+ALTER TABLE recipes ADD COLUMN total_time_minutes integer GENERATED ALWAYS AS
+  (prep_time_minutes + cook_time_minutes) STORED;
 
 -- serving_size is an integer base_servings was added separately.
 -- If serving_size has useful data and base_servings is default,
