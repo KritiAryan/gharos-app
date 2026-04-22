@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useParams, useRouter } from "next/navigation";
 import { updateRecipe, deleteRecipe } from "./actions";
+import { runAgentB2 } from "./run-b2";
 
 const inputCls     = "w-full border border-brand-border rounded-button px-3 py-2 text-sm bg-brand-bg focus:outline-none focus:ring-2 focus:ring-brand-primary/50 text-brand-text";
 const textareaCls  = `${inputCls} font-mono text-xs resize-y`;
@@ -79,6 +80,10 @@ export default function RecipeDetailPage() {
   const [error, setError]       = useState("");
   const [saved, setSaved]       = useState(false);
   const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({});
+
+  // Agent B2
+  const [runningB2, setRunningB2] = useState(false);
+  const [b2Summary, setB2Summary] = useState<string>("");
 
   useEffect(() => {
     supabase.from("recipes").select("*").eq("id", id).single()
@@ -161,6 +166,33 @@ export default function RecipeDetailPage() {
     setSaving(false);
   }
 
+  async function handleRunB2() {
+    if (!confirm("Run Agent B2? This will OVERWRITE ingredients (canonical_ids), key_ingredients, and prep_components with B2's output. Unsaved form changes on other fields are preserved.")) return;
+    setRunningB2(true);
+    setB2Summary("");
+    setError("");
+    const result = await runAgentB2(id);
+    if (!result.ok) {
+      setError(`Agent B2 failed — ${result.error}`);
+      setRunningB2(false);
+      return;
+    }
+    // Reload recipe from DB so the form reflects B2's output.
+    const { data } = await supabase.from("recipes").select("*").eq("id", id).single();
+    if (data) {
+      setRecipe(data);
+      setForm((f: Record<string, any>) => ({
+        ...f,
+        key_ingredients: Array.isArray(data.key_ingredients) ? data.key_ingredients.join(", ") : "",
+        ingredients:     jsonStr(data.ingredients),
+        prep_components: jsonStr(data.prep_components),
+      }));
+    }
+    const c = result.changes;
+    setB2Summary(`Agent B2 done. ${c.ingredients_remapped} canonical_ids remapped · ${c.key_ingredients_count} key ingredients · ${c.prep_components_count} prep components.`);
+    setRunningB2(false);
+  }
+
   async function handleDelete() {
     if (!confirm(`Delete "${recipe?.display_name}"? This cannot be undone.`)) return;
     setDeleting(true);
@@ -188,6 +220,11 @@ export default function RecipeDetailPage() {
           <p className="text-brand-muted text-xs mt-0.5 font-mono">{id}</p>
         </div>
         <div className="flex gap-2 shrink-0">
+          <button onClick={handleRunB2} disabled={runningB2 || saving}
+            className="border border-purple-300 text-purple-700 text-sm px-3 py-2 rounded-button hover:bg-purple-50 disabled:opacity-50"
+            title="Normalise canonical_ids + refine key_ingredients + generate prep_components using the catalog">
+            {runningB2 ? "Running B2…" : "🧑‍🍳 Run Agent B2"}
+          </button>
           {(recipe?.verified as boolean)
             ? <span className="text-xs text-green-600 font-medium self-center">✅ Verified</span>
             : <button onClick={() => handleSave(true)} disabled={saving}
@@ -205,6 +242,12 @@ export default function RecipeDetailPage() {
           </button>
         </div>
       </div>
+
+      {b2Summary && (
+        <div className="bg-purple-50 border border-purple-200 text-purple-700 text-sm rounded-button px-4 py-3 mb-6">
+          {b2Summary} <span className="text-purple-500">Review the updated fields below, then Save or Verify.</span>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-button px-4 py-3 mb-6">{error}</div>

@@ -7,14 +7,14 @@ const PROMPTS = [
     label: "Agent B1 — Recipe Extractor",
     phase: 2,
     description: "Extracts structured recipe data (ingredients, steps, tips, FAQs, pairing) from Jina-fetched markdown.",
-    status: "pending",
+    status: "active",
   },
   {
     id: "b2_prep_planner",
     label: "Agent B2 — Prep Planner",
     phase: 4,
-    description: "Given a structured recipe from B1, identifies batch-prep components with storage container and shelf life recommendations.",
-    status: "pending",
+    description: "Given a structured recipe from B1, normalises ingredient canonical_ids against the catalog, refines key_ingredients, and generates batch-prep components with storage options and shelf life.",
+    status: "active",
   },
   {
     id: "image_gen",
@@ -60,11 +60,17 @@ export default function PromptsPage() {
                 </div>
                 <p className="text-sm text-brand-muted">{p.description}</p>
               </div>
-              {p.status === "pending" ? (
+              {p.status === "pending" && (
                 <span className="text-xs bg-amber-50 border border-amber-200 text-amber-700 px-2 py-1 rounded-full shrink-0">
                   Coming in Phase {p.phase}
                 </span>
-              ) : (
+              )}
+              {p.status === "active" && (
+                <span className="text-xs bg-emerald-50 border border-emerald-200 text-emerald-700 px-2 py-1 rounded-full shrink-0">
+                  Active
+                </span>
+              )}
+              {p.status === "none" && (
                 <span className="text-xs bg-brand-bg border border-brand-border text-brand-muted px-2 py-1 rounded-full shrink-0">
                   Deterministic — no prompt
                 </span>
@@ -75,6 +81,14 @@ export default function PromptsPage() {
               <div className="mt-4 bg-brand-bg border border-brand-border rounded-button p-3 text-xs text-brand-muted font-mono">
                 Prompt will appear here once Phase {p.phase} is complete.
                 You will be able to edit and test it directly from this panel.
+              </div>
+            )}
+
+            {p.status === "active" && (
+              <div className="mt-4 bg-brand-bg border border-brand-border rounded-button p-3 text-xs text-brand-muted">
+                Prompt is live. Source lives in the agent&apos;s server action — edit it there and redeploy.
+                {p.id === "b1_extraction" && <span className="font-mono block mt-1">admin/app/recipes/new/actions.ts · SYSTEM_PROMPT</span>}
+                {p.id === "b2_prep_planner" && <span className="font-mono block mt-1">admin/app/recipes/[id]/run-b2.ts · B2_SYSTEM_PROMPT</span>}
               </div>
             )}
           </div>
