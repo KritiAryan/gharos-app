@@ -237,16 +237,39 @@ async function fetchJinaMarkdown(url: string): Promise<JinaResult> {
       const body = await res.text().catch(() => "");
       return { ok: false, error: `Jina ${res.status} ${res.statusText}${body ? " — " + body.slice(0, 150) : ""}` };
     }
-    const text = await res.text();
-    if (!text || text.trim().length < 200) {
+    const raw = await res.text();
+    if (!raw || raw.trim().length < 200) {
       return { ok: false, error: "Jina returned empty / too-little content (page may be blocked or JS-rendered)." };
     }
-    // Trim to ~18000 chars (was 12k — long recipes were getting truncated before FAQs/tips section)
-    return { ok: true, markdown: text.slice(0, 18000) };
+    // Slim the markdown — recipe sites are ~60% boilerplate (ads, related posts, social links).
+    // Removing noise gets us more useful recipe content under the same token budget.
+    const cleaned = cleanMarkdown(raw);
+    // Cap at 9000 chars (~2250 tokens) to keep total request under Groq's 12k TPM free tier
+    return { ok: true, markdown: cleaned.slice(0, 9000) };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return { ok: false, error: `Network error — ${msg}` };
   }
+}
+
+/** Strip recipe-site boilerplate so the token budget gets spent on actual recipe content. */
+function cleanMarkdown(md: string): string {
+  return md
+    // Drop the Jina header block before the actual content starts
+    .replace(/^Title:.*?\n(URL Source:.*?\n)?(Published Time:.*?\n)?(Markdown Content:\n)?/is, "")
+    // Remove image markdown: ![alt](url)
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
+    // Collapse link markdown [text](url) → text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    // Remove bare URLs
+    .replace(/https?:\/\/[^\s)]+/g, "")
+    // Drop common boilerplate sections (case-insensitive, up to the next heading)
+    .replace(/#+\s*(Related|You may also like|More recipes|Recommended|Share this|Follow us|Subscribe|Comments|Leave a comment|Reader interactions|Primary sidebar)[\s\S]*?(?=\n#|\n\s*$)/gi, "")
+    // Collapse 3+ newlines to 2
+    .replace(/\n{3,}/g, "\n\n")
+    // Strip trailing whitespace on every line
+    .replace(/[ \t]+$/gm, "")
+    .trim();
 }
 
 // ─── Step 3: Catalog context ──────────────────────────────────────────────────
@@ -254,15 +277,16 @@ async function fetchJinaMarkdown(url: string): Promise<JinaResult> {
 async function fetchCatalogContext(): Promise<string> {
   try {
     const supabase = createAdminClient();
+    // Only the most-common 60 ingredients — enough to anchor canonical_id choices
+    // without blowing the TPM budget. Curator can fix mismatches on review.
     const { data } = await supabase
       .from("ingredient_catalog")
-      .select("canonical_id, aliases, category")
-      .limit(200);
+      .select("canonical_id")
+      .order("is_staple", { ascending: false })
+      .limit(60);
     if (!data || data.length === 0) return "";
-    const lines = (data as { canonical_id: string; aliases: string[]; category: string }[]).map(
-      r => `${r.canonical_id} (${(r.aliases ?? []).slice(0, 3).join(", ")})`
-    );
-    return `Known canonical ingredient IDs:\n${lines.join("\n")}`;
+    const ids = (data as { canonical_id: string }[]).map(r => r.canonical_id).join(", ");
+    return `Prefer these canonical_ids where they match: ${ids}`;
   } catch {
     return "";
   }
@@ -543,18 +567,27 @@ REMINDERS:
     body: JSON.stringify({
       model: "llama-3.3-70b-versatile",
       temperature: 0.05,
-      max_tokens: 8000,           // bumped to fit full tips/FAQs/notes/steps + raw_text
+      // Groq free tier TPM = 12 000 (input + output combined per minute).
+      // Budgeting: system ~1 500 + user ~2 800 + markdown ~2 250 = ~6.5k input.
+      // Leave ~5 000 for output (plenty for full steps/tips/FAQs/notes with raw_text).
+      max_tokens: 5000,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userMessage },
       ],
     }),
-    signal: AbortSignal.timeout(90000),   // bumped — bigger responses take longer
+    signal: AbortSignal.timeout(90000),
   });
 
   if (!res.ok) {
     const err = await res.text();
+    if (res.status === 413 || res.status === 429) {
+      // TPM rate limit or payload too large — tell the user to wait a minute
+      throw new Error(
+        `Groq rate limit hit (${res.status}). Free tier allows 12 000 tokens/min. Wait ~60 seconds and try again, or try a shorter recipe.`
+      );
+    }
     throw new Error(`Groq API error ${res.status}: ${err.slice(0, 200)}`);
   }
 
