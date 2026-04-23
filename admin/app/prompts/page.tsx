@@ -20,8 +20,8 @@ const PROMPTS = [
     id: "image_gen",
     label: "Image Generation — Gemini",
     phase: 5,
-    description: "Generates a brand-consistent food photo using the recipe name, dish type, cuisine, and region to determine vessel and styling.",
-    status: "pending",
+    description: "Generates a brand-consistent food photo using the recipe name, dish type, cuisine, and region to determine vessel and styling. Uses Gemini 2.5 Flash Image.",
+    status: "active",
   },
   {
     id: "agent_a_llm_tiebreak",
@@ -88,7 +88,8 @@ export default function PromptsPage() {
               <div className="mt-4 bg-brand-bg border border-brand-border rounded-button p-3 text-xs text-brand-muted">
                 Prompt is live. Source lives in the agent&apos;s server action — edit it there and redeploy.
                 {p.id === "b1_extraction" && <span className="font-mono block mt-1">admin/app/recipes/new/actions.ts · SYSTEM_PROMPT</span>}
-                {p.id === "b2_prep_planner" && <span className="font-mono block mt-1">admin/app/recipes/[id]/run-b2.ts · B2_SYSTEM_PROMPT</span>}
+                {p.id === "b2_prep_planner" && <span className="font-mono block mt-1">admin/app/recipes/[id]/b2-prompt.ts · B2_SYSTEM_PROMPT</span>}
+                {p.id === "image_gen"       && <span className="font-mono block mt-1">admin/app/recipes/[id]/image-prompt.ts · buildImagePrompt()</span>}
               </div>
             )}
           </div>

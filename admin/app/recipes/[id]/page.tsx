@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useParams, useRouter } from "next/navigation";
 import { updateRecipe, deleteRecipe } from "./actions";
 import { runAgentB2 } from "./run-b2";
+import { runGeminiImage } from "./run-image";
 
 const inputCls     = "w-full border border-brand-border rounded-button px-3 py-2 text-sm bg-brand-bg focus:outline-none focus:ring-2 focus:ring-brand-primary/50 text-brand-text";
 const textareaCls  = `${inputCls} font-mono text-xs resize-y`;
@@ -84,6 +85,10 @@ export default function RecipeDetailPage() {
   // Agent B2
   const [runningB2, setRunningB2] = useState(false);
   const [b2Summary, setB2Summary] = useState<string>("");
+
+  // Image gen
+  const [runningImage, setRunningImage] = useState(false);
+  const [imageSummary, setImageSummary] = useState<string>("");
 
   useEffect(() => {
     supabase.from("recipes").select("*").eq("id", id).single()
@@ -200,6 +205,32 @@ export default function RecipeDetailPage() {
     }
   }
 
+  async function handleRunImage() {
+    if (!confirm("Generate a new image with Gemini? This will replace the current image_storage_path. The previous image file stays in storage as a fallback.")) return;
+    setRunningImage(true);
+    setImageSummary("");
+    setError("");
+    try {
+      const result = await runGeminiImage(id);
+      if (!result.ok) {
+        setError(`Image generation failed — ${result.error}`);
+        return;
+      }
+      // Refresh recipe so the image preview re-renders with the new path.
+      const { data } = await supabase.from("recipes").select("*").eq("id", id).single();
+      if (data) {
+        setRecipe(data);
+        setForm((f: Record<string, any>) => ({ ...f, image_storage_path: data.image_storage_path }));
+      }
+      setImageSummary(`New image saved to ${result.image_storage_path}. Reload may be needed if cached.`);
+    } catch (e) {
+      setError(`Image generation failed — ${e instanceof Error ? e.message : "unexpected error"}`);
+      console.error("[handleRunImage]", e);
+    } finally {
+      setRunningImage(false);
+    }
+  }
+
   async function handleDelete() {
     if (!confirm(`Delete "${recipe?.display_name}"? This cannot be undone.`)) return;
     setDeleting(true);
@@ -260,26 +291,40 @@ export default function RecipeDetailPage() {
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-button px-4 py-3 mb-6">{error}</div>
       )}
 
-      {/* Image preview */}
-      {(recipe?.image_storage_path || recipe?.source_image_url) && (
-        <div className="bg-brand-card border border-brand-border rounded-card p-4 mb-6 flex items-center gap-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
+      {/* Image preview (always shown — placeholder when no image yet) */}
+      <div className="bg-brand-card border border-brand-border rounded-card p-4 mb-6 flex items-center gap-4">
+        {(recipe?.image_storage_path || recipe?.source_image_url) ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
           <img
             src={recipe.image_storage_path
-              ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/recipe-images/${recipe.image_storage_path}`
+              ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/recipe-images/${recipe.image_storage_path}?v=${recipe.updated_at ?? ""}`
               : recipe.source_image_url as string}
             alt={recipe.display_name as string}
             className="w-24 h-24 rounded-card object-cover border border-brand-border"
           />
-          <div>
-            <p className="text-xs text-brand-muted mb-1">Recipe Image</p>
-            <p className="text-xs font-mono text-brand-text break-all">{(recipe.image_storage_path || recipe.source_image_url) as string}</p>
-            <button className="mt-2 text-xs text-brand-primary hover:underline opacity-50 cursor-not-allowed" disabled>
-              🎨 Regenerate with Gemini (coming soon)
-            </button>
+        ) : (
+          <div className="w-24 h-24 rounded-card border border-dashed border-brand-border flex items-center justify-center text-2xl text-brand-muted shrink-0">
+            🍲
           </div>
+        )}
+        <div>
+          <p className="text-xs text-brand-muted mb-1">Recipe Image</p>
+          <p className="text-xs font-mono text-brand-text break-all">
+            {(recipe?.image_storage_path || recipe?.source_image_url) as string || "No image yet"}
+          </p>
+          <button onClick={handleRunImage} disabled={runningImage || saving}
+            className="mt-2 text-xs text-brand-primary hover:underline disabled:opacity-50 disabled:cursor-not-allowed">
+            {runningImage
+              ? "🎨 Generating… (up to 90s)"
+              : (recipe?.image_storage_path || recipe?.source_image_url)
+                ? "🎨 Regenerate with Gemini"
+                : "🎨 Generate with Gemini"}
+          </button>
+          {imageSummary && (
+            <p className="text-xs text-emerald-600 mt-1">{imageSummary}</p>
+          )}
         </div>
-      )}
+      </div>
 
       <div className="space-y-6">
         {/* Identity */}
