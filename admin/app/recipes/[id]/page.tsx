@@ -171,26 +171,33 @@ export default function RecipeDetailPage() {
     setRunningB2(true);
     setB2Summary("");
     setError("");
-    const result = await runAgentB2(id);
-    if (!result.ok) {
-      setError(`Agent B2 failed — ${result.error}`);
+    try {
+      const result = await runAgentB2(id);
+      if (!result.ok) {
+        setError(`Agent B2 failed — ${result.error}`);
+        return;
+      }
+      // Reload recipe from DB so the form reflects B2's output.
+      const { data } = await supabase.from("recipes").select("*").eq("id", id).single();
+      if (data) {
+        setRecipe(data);
+        setForm((f: Record<string, any>) => ({
+          ...f,
+          key_ingredients: Array.isArray(data.key_ingredients) ? data.key_ingredients.join(", ") : "",
+          ingredients:     jsonStr(data.ingredients),
+          prep_components: jsonStr(data.prep_components),
+        }));
+      }
+      const c = result.changes;
+      setB2Summary(`Agent B2 done. ${c.ingredients_remapped} canonical_ids remapped · ${c.key_ingredients_count} key ingredients · ${c.prep_components_count} prep components.`);
+    } catch (e) {
+      // Server action threw (rather than returning {ok:false}) — e.g. a Next
+      // dispatcher error. Show the message and make sure the button recovers.
+      setError(`Agent B2 failed — ${e instanceof Error ? e.message : "unexpected error"}`);
+      console.error("[handleRunB2]", e);
+    } finally {
       setRunningB2(false);
-      return;
     }
-    // Reload recipe from DB so the form reflects B2's output.
-    const { data } = await supabase.from("recipes").select("*").eq("id", id).single();
-    if (data) {
-      setRecipe(data);
-      setForm((f: Record<string, any>) => ({
-        ...f,
-        key_ingredients: Array.isArray(data.key_ingredients) ? data.key_ingredients.join(", ") : "",
-        ingredients:     jsonStr(data.ingredients),
-        prep_components: jsonStr(data.prep_components),
-      }));
-    }
-    const c = result.changes;
-    setB2Summary(`Agent B2 done. ${c.ingredients_remapped} canonical_ids remapped · ${c.key_ingredients_count} key ingredients · ${c.prep_components_count} prep components.`);
-    setRunningB2(false);
   }
 
   async function handleDelete() {
