@@ -2,6 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
+import { normaliseRecipeEnums } from "@/lib/recipe-enums";
 
 export type UpdateResult =
   | { ok: true }
@@ -10,7 +11,8 @@ export type UpdateResult =
 export async function updateRecipe(id: string, payload: Record<string, unknown>): Promise<UpdateResult> {
   try {
     const supabase = createAdminClient();
-    const { error } = await supabase.from("recipes").update(payload).eq("id", id);
+    const safePayload = normaliseRecipeEnums(payload);
+    const { error } = await supabase.from("recipes").update(safePayload).eq("id", id);
     if (error) {
       const msg = error.message || "Unknown DB error";
       const code = error.code ? ` (code ${error.code})` : "";

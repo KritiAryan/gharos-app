@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/server";
+import { normaliseRecipeEnums } from "@/lib/recipe-enums";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -853,9 +854,10 @@ export type SaveResult =
 export async function saveRecipe(payload: Record<string, unknown>): Promise<SaveResult> {
   try {
     const supabase = createAdminClient();
+    const safePayload = normaliseRecipeEnums(payload);
     const { data, error } = await supabase
       .from("recipes")
-      .insert(payload)
+      .insert(safePayload)
       .select("id")
       .single();
 
