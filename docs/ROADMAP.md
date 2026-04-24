@@ -3,7 +3,7 @@
 Living document. Anything we've discussed, scoped, or deferred goes here so it doesn't
 get lost between sessions. Move items between sections as they progress.
 
-Last updated: 2026-04-24
+Last updated: 2026-04-24 (Phase 7 shipped)
 
 ---
 
@@ -33,6 +33,14 @@ Last updated: 2026-04-24
 - Default weights: pantry 30% / novelty 20% / favourite 15% / calorie 10% /
   cuisine variety 10% / prep load 10% / seasonality 5%
 
+### Phase 7 — Agent E: Deterministic prep planner
+- `services/agentE.ts`: generatePrepPlanFromCatalog() — classifies prep_components
+  into EVENING_BEFORE (soak ≥4h), WEEKEND_PREP (≥20 min), or MORNING_OF (<20 min)
+- Deduplicates shared bases across recipes (one task, multiple `forMeals`)
+- Adjusts daily cook card times by subtracting prepped component time
+- `services/geminiService.js`: tries catalog first, falls back to LLM Agent E
+- Output shape unchanged — meal-prep.tsx requires zero changes
+
 ### Phase 6 part 2 — Mobile Agent A catalog mode
 - `services/scoring.ts` — byte-for-byte mobile copy of admin scoring module
 - `services/agentA.ts` — catalog-based suggestion pipeline
@@ -52,18 +60,6 @@ Last updated: 2026-04-24
 ---
 
 ## Planned — next up
-
-### Phase 7 — Agent E: Deterministic prep planner
-Scope (to be refined):
-- Takes the user's selected cards for the week + their schedule
-- Outputs a prep plan: what to cook ahead on Sunday, what to do the morning of, etc.
-- Deterministic (no LLM) — uses `prep_components` from B2 and `prep_ahead` flags
-- Output: weekly prep calendar visible on mobile
-
-Open questions:
-- How much does this integrate with device calendars?
-- Do we notify / remind, or just display?
-- How do we handle "cooked extra" leftovers carrying forward?
 
 ### Phase 8 — Card UI "show why"
 Scope:
@@ -92,6 +88,15 @@ they can override intelligently when the system is wrong.
   Expose in admin UI.
 - **Seasonality signal** — currently returns 0.5 placeholder. Needs ingredient
   seasonality data source (India-specific produce calendar).
+
+### Agent E improvements
+- **Re-run B2 on older recipes** to populate missing `category` field on `prep_components`.
+  Some early imports have components without `category`, so Agent E falls back to Saturday
+  as the default weekend day. Easily fixed by re-running B2 on those recipes in the admin panel.
+- **Leftovers / reuse** — if a recipe makes 4 portions and the plan only needs 2, note that
+  it covers another day. Skipped in v1 for complexity.
+- **Notification reminders** — "It's 9pm Tuesday — start soaking dal for Wednesday dinner."
+  Deferred pending push notification infrastructure.
 
 ### Agent B (import) improvements
 - **B1 model downgrade to `llama-3.1-8b-instant`** — cheaper, higher TPM, extraction

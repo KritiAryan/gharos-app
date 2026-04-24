@@ -3,7 +3,7 @@
 Living QA checklist. Add new sections as features ship. Check boxes only when you've
 actually run the test — not when the code compiles.
 
-Last updated: 2026-04-24
+Last updated: 2026-04-24 (Phase 7 added)
 
 ---
 
@@ -118,9 +118,70 @@ Profile cuisines must each have ≥20 rows, OR temporarily lower `SEED_MIN` in `
 
 ---
 
-## Phase 7 — Agent E scheduler (NOT STARTED)
+## Phase 7 — Agent E (deterministic prep planner)
 
-_Add checklist when implementation begins._
+**Prerequisite:** At least some meals in the weekly plan must be catalog cards (i.e. have
+`recipe_id` set — cards returned by Agent A catalog path). If all meals are LLM-invented,
+Agent E falls back to the old LLM plan automatically.
+
+**How to run:**
+1. Build a weekly plan in the app (meal suggestions → select meals → weekly plan → save).
+2. Navigate to the Meal Prep screen.
+3. Watch Metro logs for Agent E signals.
+
+### Metro log signals
+
+- [ ] `[agentE] catalog plan: N weekend session(s), M evening prep(s), K daily cook card(s)`
+      → deterministic path fired.
+- [ ] `[agentE] no catalog meals in plan — falling back to LLM` → all meals are LLM-invented;
+      verify at least some cards come from the catalog (Phase 6 part 2 must be working).
+- [ ] `[agentE] catalog has no weekendPrep/eveningPrep — falling back to LLM` → all
+      prep_components are short (<20 min); check the recipes' B2 data has meaningful components.
+- [ ] `[generatePrepPlan] catalog path failed, falling back to LLM: …` → Supabase error,
+      capture the message.
+
+### Weekend prep checks
+
+- [ ] Saturday session exists and contains heavy tasks (cook_base, boil, long marination).
+- [ ] Sunday session exists (if any) and contains light tasks (chop, dough, grind).
+- [ ] A shared base used by multiple recipes (e.g. onion-tomato base in Palak Paneer +
+      Mushroom Masala) appears as **one task** with both meal names in `forMeals` —
+      not duplicated.
+- [ ] `estimatedTime` on each session = sum of task `estimatedMinutes`. Roughly:
+      Saturday 30–90 min, Sunday 10–40 min.
+- [ ] `storageNote` is present and mentions location + shelf life
+      (e.g. "Fridge in airtight container, up to 3 days").
+
+### Evening-before checks
+
+- [ ] Recipes with a long soak (≥4h) appear in `weekdayEveningPrep`, NOT in weekend prep.
+      Example: Maa Ki Dal (480 min soak) on Wednesday → soak reminder on Tuesday.
+- [ ] The day name in `weekdayEveningPrep` is the day *before* the meal day
+      (Monday meal → "sunday" evening; Wednesday meal → "tuesday" evening).
+- [ ] Same soak component for the same meal is not duplicated if it appears in multiple slots.
+
+### Daily cook card checks
+
+- [ ] Every day in the weekly plan has a daily cook card entry.
+- [ ] `estimatedCookMinutes` is less than the recipe's `total_time_minutes` for meals
+      that have weekend-prepped components (time savings applied).
+- [ ] `estimatedCookMinutes` is at least 10 (floor enforced in code).
+- [ ] `preppedItems` lists what was prepped on the weekend for that meal
+      (e.g. "Sauté onion-tomato-cashew base and blend (prepped on weekend)").
+- [ ] Meals without a `recipe_id` (LLM-invented cards) still appear in daily cook cards
+      with their original `cookTime` and empty `preppedItems` — no crash.
+
+### Data quality checks
+
+- [ ] Recipes where B2 populated `prep_components` without a `category` field still
+      classify correctly — they fall back to Saturday for weekend tasks.
+      **KNOWN ISSUE:** some older B2 runs omit `category`. Re-running B2 on those
+      recipes will fix it. Tracked in ROADMAP.md backlog.
+
+### Fallback behaviour
+
+- [ ] Create a plan using only LLM-invented cards (before catalog has ≥20 recipes) →
+      Metro log shows LLM fallback, prep screen still renders (LLM plan, not blank).
 
 ---
 
