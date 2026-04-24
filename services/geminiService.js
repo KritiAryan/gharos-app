@@ -9,6 +9,7 @@
 
 import { checkRecipeDB, storeInRecipeDB } from "./recipeDBService";
 import { generateSuggestionsFromCatalog } from "./agentA";
+import { generatePrepPlanFromCatalog }    from "./agentE";
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
@@ -509,7 +510,30 @@ Return ONLY valid JSON array.`;
 // ─────────────────────────────────────────────────────────────────────────────
 // AGENT E — Meal Prep Plan Generator
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// Primary path: deterministic catalog-based planner (services/agentE.ts).
+//   • Uses prep_components from verified Supabase recipes (exact times, storage)
+//   • Deduplicates shared bases (e.g. onion-tomato base across 3 recipes)
+//   • Classifies tasks: overnight soak → evening-before, heavy → Sat, light → Sun
+//   • Returns null when no catalog meals exist → falls back to LLM below
+//
+// Fallback path: LLM-invented prep plan (original behaviour).
+//   • Only fires when all meals lack recipe_id (pure LLM-invented cards)
+
 export const generatePrepPlan = async ({ selectedMeals, weeklyPlan }) => {
+  // 1. Try catalog-based deterministic plan first
+  try {
+    const catalogPlan = await generatePrepPlanFromCatalog({ selectedMeals, weeklyPlan });
+    if (catalogPlan) return catalogPlan;
+  } catch (err) {
+    console.warn("[generatePrepPlan] catalog path failed, falling back to LLM:", err?.message ?? err);
+  }
+
+  // 2. LLM fallback (original behaviour)
+  return generatePrepPlanLLM({ selectedMeals, weeklyPlan });
+};
+
+const generatePrepPlanLLM = async ({ selectedMeals, weeklyPlan }) => {
   // Build a compact meal summary — include ingredients + key steps
   const mealSummaries = (weeklyPlan || []).flatMap((day) =>
     (day.slots || []).map((slot) => {
