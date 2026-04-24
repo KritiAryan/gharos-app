@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { checkRecipeDB, storeInRecipeDB } from "./recipeDBService";
+import { generateSuggestionsFromCatalog } from "./agentA";
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
@@ -113,9 +114,39 @@ const callLLM = async (prompt, model = GROQ_MODEL_CD) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AGENT A — Meal Suggestor
+// AGENT A — Meal Suggestor (Phase 6)
 // ─────────────────────────────────────────────────────────────────────────────
-export const generateSuggestions = async ({
+//
+// Primary path: catalog-based scoring (services/agentA.ts).
+//   • Queries Supabase for verified recipes matching diet/cuisines
+//   • Scores each using pantry match / novelty / favourite / calorie / cuisine
+//     variety / prep load (DEFAULT_WEIGHTS in services/scoring.ts)
+//   • Returns T1+T2 cards with full ingredients / steps / images attached
+//
+// Fallback path: LLM invention (this function).
+//   • Only fires when catalog has < 20 verified recipes matching user's diet
+//   • Generates synthetic cards without Supabase-backed recipe data
+//   • Same output shape as catalog cards so meal-cards.tsx renders either
+
+export const generateSuggestions = async (input) => {
+  // 1. Try catalog-based scoring first.
+  try {
+    const catalogCards = await generateSuggestionsFromCatalog(input);
+    if (catalogCards.length > 0) {
+      return catalogCards;
+    }
+  } catch (err) {
+    console.warn("[generateSuggestions] catalog path failed, falling back to LLM:", err?.message ?? err);
+  }
+
+  // 2. LLM-invention fallback (original behaviour).
+  return generateSuggestionsLLM(input);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LLM fallback — used when the catalog is too thin for the user's diet/cuisines
+// ─────────────────────────────────────────────────────────────────────────────
+const generateSuggestionsLLM = async ({
   cuisines,
   diet,
   pantry,
@@ -169,7 +200,7 @@ Return ONLY valid JSON array.`;
       isFavourite: false,
     }));
   } catch (err) {
-    console.error("Agent A failed:", err);
+    console.error("Agent A LLM fallback failed:", err);
     return [];
   }
 };
