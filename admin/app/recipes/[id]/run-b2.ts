@@ -256,8 +256,15 @@ Run Agent B2. Return JSON:
   if (!res.ok) {
     const err = await res.text();
     if (res.status === 413 || res.status === 429) {
+      const remainingTpd = res.headers.get("x-ratelimit-remaining-tokens");
+      const resetTpd     = res.headers.get("x-ratelimit-reset-tokens");
+      const remainingRpd = res.headers.get("x-ratelimit-remaining-requests");
+      const resetRpd     = res.headers.get("x-ratelimit-reset-requests");
       throw new Error(
-        `Groq rate limit hit (${res.status}). Free tier allows 12 000 tokens/min. Wait ~60 seconds and try again.`
+        `Groq rate limit hit (${res.status}). ` +
+        `Tokens remaining: ${remainingTpd ?? "?"} (resets in ${resetTpd ?? "?"}). ` +
+        `Requests remaining: ${remainingRpd ?? "?"} (resets in ${resetRpd ?? "?"}). ` +
+        `Details: ${err.slice(0, 300)}`
       );
     }
     throw new Error(`Groq API error ${res.status}: ${err.slice(0, 200)}`);
